@@ -346,3 +346,38 @@ All 103 existing tests must continue to pass. The `run_loop.py` signature change
 - **Cloud/HF Spaces deployment** -- local only.
 - **Editing spec.yaml from the dashboard** -- read-only.
 - **Multiple concurrent runs** -- single run at a time for v1.
+
+## 9. Execution Plan (Wave Summary)
+
+Tasks are in `docs/DASHBOARD_TASKS/`. Grouped by dependency order:
+
+```
+Wave 1 (no dependencies):
+  TASK_001  Scaffold & Dependencies              infra-sre-architect  Low
+
+Wave 2 (depends on Wave 1 -- all parallel):
+  TASK_002  data_loader.py                        python-expert        Medium
+  TASK_003  git_history.py                        python-expert        Medium
+  TASK_004  log_formatter.py                      python-expert        Low
+  TASK_008  run_loop.py callbacks (stop/pause)    python-expert        Low
+
+Wave 3 (depends on Wave 1 + Wave 2 partial):
+  TASK_005  charts.py core (Live Run)             python-expert        Medium
+  TASK_006  charts.py advanced (Optimization+)    python-expert        Medium
+  TASK_007  run_manager.py (thread mgmt)          python-expert        Medium
+
+Wave 4 (depends on Waves 2-3 -- assembles the primary tab):
+  TASK_009  dashboard.py -- Live Run tab          python-expert        High
+
+Wave 5 (depends on Wave 4 -- all parallel secondary tabs):
+  TASK_010  Optimization Dashboard tab            python-expert        Medium
+  TASK_011  Code Evolution tab (git diffs)        python-expert        Medium
+  TASK_012  Run History tab                       python-expert        Medium
+  TASK_013  Axes Explorer tab                     python-expert        Medium
+  TASK_014  Config tab (read-only)                python-expert        Low
+
+Wave 6 (final -- depends on all):
+  TASK_015  Cleanup, DRY review, full test suite  python-expert        Medium
+```
+
+**Total: 15 tasks, 6 waves, ~38 unit tests + ~12 integration tests.**
