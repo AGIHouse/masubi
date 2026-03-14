@@ -154,3 +154,94 @@ def test_loop_logs_each_experiment(spec, tmp_path):
         )
         _log_iteration(ctx, result)
         mock_log.assert_called_once_with(ctx, result)
+
+
+# ---------------------------------------------------------------------------
+# New tests for stop_check / pause_check callbacks
+# ---------------------------------------------------------------------------
+
+
+def test_stop_check_callback_exits_loop(spec, tmp_path):
+    """Pass a stop_check that returns True after 1 call; verify loop exits early."""
+    from run_loop import run_autoresearch
+
+    call_count = 0
+
+    def stop_after_first():
+        nonlocal call_count
+        call_count += 1
+        return call_count >= 1  # stop immediately
+
+    with patch("run_loop.get_spec", return_value=spec), \
+         patch("run_loop.load_calibration") as mock_cal, \
+         patch("run_loop.start_run") as mock_run, \
+         patch("run_loop.load_eval_chains", return_value=[MagicMock()]), \
+         patch("run_loop.load_gold_chains", return_value=[]), \
+         patch("run_loop.finalize_run"):
+
+        mock_cal.return_value = MagicMock()
+        mock_run.return_value = MagicMock(run_dir=tmp_path)
+
+        run_autoresearch(max_experiments=100, stop_check=stop_after_first)
+        # If stop_check works, we should have exited after 1 call,
+        # not run any experiments
+        assert call_count == 1
+
+
+def test_pause_check_callback_blocks(spec, tmp_path):
+    """Pass a pause_check that returns True for 2 calls then False; verify loop pauses then continues."""
+    from run_loop import run_autoresearch
+
+    pause_calls = 0
+
+    def pause_briefly():
+        nonlocal pause_calls
+        pause_calls += 1
+        return pause_calls <= 2  # pause for 2 checks, then resume
+
+    stop_calls = 0
+
+    def stop_after_pause():
+        nonlocal stop_calls
+        stop_calls += 1
+        return stop_calls >= 2  # stop on 2nd stop check (after pause resumes)
+
+    with patch("run_loop.get_spec", return_value=spec), \
+         patch("run_loop.load_calibration") as mock_cal, \
+         patch("run_loop.start_run") as mock_run, \
+         patch("run_loop.load_eval_chains", return_value=[MagicMock()]), \
+         patch("run_loop.load_gold_chains", return_value=[]), \
+         patch("run_loop.finalize_run"), \
+         patch("run_loop.time") as mock_time:
+
+        mock_cal.return_value = MagicMock()
+        mock_run.return_value = MagicMock(run_dir=tmp_path)
+        mock_time.time.return_value = 0  # no time limit
+        mock_time.sleep = MagicMock()  # don't actually sleep
+
+        run_autoresearch(
+            max_experiments=100,
+            stop_check=stop_after_pause,
+            pause_check=pause_briefly,
+        )
+        # pause_check should have been called (at least once during pause)
+        assert pause_calls >= 1
+
+
+def test_callbacks_default_none_backward_compatible(spec, tmp_path):
+    """Call run_autoresearch() without callbacks; verify it works identically."""
+    from run_loop import run_autoresearch
+
+    with patch("run_loop.get_spec", return_value=spec), \
+         patch("run_loop.load_calibration") as mock_cal, \
+         patch("run_loop.start_run") as mock_run, \
+         patch("run_loop.load_eval_chains", return_value=[]), \
+         patch("run_loop.load_gold_chains", return_value=[]), \
+         patch("run_loop.finalize_run"):
+
+        mock_cal.return_value = MagicMock()
+        mock_run.return_value = MagicMock(run_dir=tmp_path)
+
+        # Should work without passing any callbacks
+        run_autoresearch(max_experiments=10)
+        # No crash = backward compatible

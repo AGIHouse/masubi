@@ -7,35 +7,25 @@ The Gradio Dashboard is an optional add-on for monitoring the autoresearch loop.
 Create the dashboard package skeleton and add optional dependencies so that `uv sync --extra dashboard` installs Gradio/Plotly/Pandas and `uv run python -c "from autotrust.dashboard import *"` succeeds.
 
 ## Research First
-- [ ] Read GRADIO_DASHBOARD_PRD.md section 5.1 (Architecture) for the file layout
-- [ ] Read GRADIO_DASHBOARD_PRD.md section 5.9 (Dependencies) for required packages
-- [ ] Read `pyproject.toml` to understand current dependency structure
-- [ ] Verify `autotrust/__init__.py` exists
+- [x] Read GRADIO_DASHBOARD_PRD.md section 5.1 (Architecture) for the file layout
+- [x] Read GRADIO_DASHBOARD_PRD.md section 5.9 (Dependencies) for required packages
+- [x] Read `pyproject.toml` to understand current dependency structure
+- [x] Verify `autotrust/__init__.py` exists
 
 ## TDD: Tests First (Red)
 No unit tests for this task (it is pure configuration/scaffold). Verification is that imports succeed.
 
 ## Implementation
-- [ ] Step 1: Add `[project.optional-dependencies]` entry for dashboard in `pyproject.toml`:
-  ```toml
-  [project.optional-dependencies]
-  dev = ["pytest", "ruff"]
-  dashboard = [
-      "gradio>=5.0",
-      "plotly>=5.0",
-      "pandas>=2.0",
-  ]
-  ```
-- [ ] Step 2: Create the dashboard package skeleton:
-  - `autotrust/dashboard/__init__.py` (empty, or with `__all__` listing submodules)
-  - `autotrust/dashboard/run_manager.py` (empty placeholder with docstring)
-  - `autotrust/dashboard/data_loader.py` (empty placeholder with docstring)
-  - `autotrust/dashboard/git_history.py` (empty placeholder with docstring)
-  - `autotrust/dashboard/charts.py` (empty placeholder with docstring)
-  - `autotrust/dashboard/log_formatter.py` (empty placeholder with docstring)
-- [ ] Step 3: Create `dashboard.py` at project root (empty placeholder with docstring -- Gradio Blocks app entry point)
-- [ ] Step 4: Run `uv sync --extra dashboard` to verify installation succeeds
-- [ ] Step 5: Run `uv run python -c "from autotrust.dashboard import data_loader, git_history, charts, log_formatter, run_manager"` to verify imports
+- [x] Step 1: Add `[project.optional-dependencies]` entry for dashboard in `pyproject.toml`
+- [x] Step 2: Create the dashboard package skeleton
+- [x] Step 3: Create `dashboard.py` at project root
+- [x] Step 4: Run `uv sync --extra dashboard` to verify installation succeeds
+- [x] Step 5: Run imports to verify
+
+## Review Notes
+- Installed gradio 6.9.0, plotly 6.6.0, pandas via uv sync --extra dashboard
+- All 103 existing tests pass
+- All dashboard module imports succeed
 
 ## TDD: Tests Pass (Green)
 - [ ] `uv sync --extra dashboard` completes without error

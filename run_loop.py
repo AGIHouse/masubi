@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -220,7 +221,11 @@ def _log_iteration(ctx: Any, result: ExperimentResult) -> None:
 # Main loop
 # ---------------------------------------------------------------------------
 
-def run_autoresearch(max_experiments: int = 50) -> None:
+def run_autoresearch(
+    max_experiments: int = 50,
+    stop_check: Callable[[], bool] | None = None,
+    pause_check: Callable[[], bool] | None = None,
+) -> None:
     """Run the autoresearch loop.
 
     1. Load spec, calibration, and data
@@ -258,6 +263,17 @@ def run_autoresearch(max_experiments: int = 50) -> None:
         if _check_budget(total_cost, spec):
             logger.info("Budget limit reached. Stopping.")
             break
+
+        # Dashboard callbacks: stop and pause
+        if stop_check and stop_check():
+            logger.info("Stop requested via callback. Ending loop.")
+            break
+        while pause_check and pause_check():
+            time.sleep(1)
+            # Re-check stop during pause
+            if stop_check and stop_check():
+                logger.info("Stop requested during pause. Ending loop.")
+                break
 
         if not eval_chains:
             logger.warning("No eval chains available. Stopping.")

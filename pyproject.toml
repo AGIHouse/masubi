@@ -23,6 +23,11 @@ dev = [
     "pytest",
     "ruff",
 ]
+dashboard = [
+    "gradio>=5.0",
+    "plotly>=5.0",
+    "pandas>=2.0",
+]
 
 [build-system]
 requires = ["hatchling"]
