@@ -117,6 +117,7 @@ def poll_update():
         return (
             status_text,
             "$0.00",
+            "",
             charts.composite_trend([]),
             charts.cost_burn([], budget_limit=_budget_limit),
             charts.radar_chart({}),
@@ -130,6 +131,7 @@ def poll_update():
     return (
         status_text,
         f"${total_cost:.2f}",
+        charts.summary_stats(metrics),
         charts.composite_trend(metrics),
         charts.cost_burn(metrics, budget_limit=_budget_limit),
         charts.radar_chart(metrics[-1]) if metrics else charts.radar_chart({}),
@@ -275,6 +277,10 @@ def _build_live_run_tab():
         status_indicator = gr.Textbox(value="idle", label="Status", interactive=False)
         cost_display = gr.Textbox(value="$0.00", label="Cost So Far", interactive=False)
 
+    # Row 0.5 -- Summary Stats
+    with gr.Row():
+        summary_md = gr.Markdown(value="")
+
     # Row 1 -- Hero Charts
     with gr.Row():
         with gr.Column(scale=3):
@@ -308,6 +314,7 @@ def _build_live_run_tab():
         outputs=[
             status_indicator,
             cost_display,
+            summary_md,
             composite_plot,
             cost_burn_plot,
             radar_plot,
