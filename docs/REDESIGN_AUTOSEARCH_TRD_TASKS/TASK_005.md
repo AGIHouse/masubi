@@ -101,6 +101,14 @@ Implement `autotrust/export.py` with functions to save clean PyTorch checkpoints
 - [ ] CLI works for PyTorch export
 - [ ] No existing test is broken
 
+## Review Notes
+- Implemented export_pytorch() that saves state_dict + config + meta to .pt file
+- Implemented load_pytorch() that reconstructs model from checkpoint (supports both Dense and MoE)
+- Implemented export_gguf() with ImportError guard for llama-cpp-python
+- Implemented list_checkpoints() that scans directory for .pt files sorted by composite
+- Uses CheckpointMeta and StudentConfig from schemas.py (no duplicate config)
+- 7 new tests in test_export.py, all pass
+
 ## Execution
 - **Agent Type**: coding subagent
 - **Wave**: 2 (parallel with TASK_003, TASK_004; depends on Wave 1)

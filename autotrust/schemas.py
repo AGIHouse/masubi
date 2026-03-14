@@ -132,3 +132,63 @@ class CalibrationReport(BaseModel):
     effective_weights: dict[str, float]
     flagged_axes: list[str]
     downweight_amounts: dict[str, float]
+
+
+# ---------------------------------------------------------------------------
+# Student model types (Stage 2)
+# ---------------------------------------------------------------------------
+
+class StudentConfig(BaseModel):
+    hidden_size: int
+    num_layers: int
+    vocab_size: int
+    max_seq_len: int
+    num_axes: int
+    num_reason_tags: int
+
+
+class MoEConfig(BaseModel):
+    num_experts: int
+    top_k: int
+    capacity_factor: float = 1.0
+    moe_layers: list[int]  # which layers are sparse
+    routing_strategy: str = "top_k"  # top_k, noisy_top_k, expert_choice
+
+
+class StudentOutput(BaseModel):
+    trust_vector: dict[str, float]
+    reason_tags: list[str]
+    escalate: bool
+
+
+class CheckpointMeta(BaseModel):
+    stage: str  # "dense_baseline" or "moe_search"
+    experiment_num: int
+    composite: float
+    path: Path
+    param_count: int
+    moe_config: MoEConfig | None = None
+
+
+class TeacherArtifacts(BaseModel):
+    prompt_pack_path: Path
+    label_rules_path: Path
+    explanation_schema_path: Path
+    synth_data_dir: Path
+
+
+def validate_moe_config(moe_config: MoEConfig, spec: Spec) -> None:
+    """Validate MoE config against spec.yaml stage2 caps.
+
+    Raises ValueError if config exceeds limits.
+    """
+    if spec.stage2 is None:
+        raise ValueError("spec.yaml has no stage2 section")
+    if moe_config.num_experts > spec.stage2.max_experts:
+        raise ValueError(
+            f"num_experts ({moe_config.num_experts}) exceeds max_experts ({spec.stage2.max_experts})"
+        )
+    if moe_config.top_k > spec.stage2.max_top_k:
+        raise ValueError(
+            f"top_k ({moe_config.top_k}) exceeds max_top_k ({spec.stage2.max_top_k})"
+        )

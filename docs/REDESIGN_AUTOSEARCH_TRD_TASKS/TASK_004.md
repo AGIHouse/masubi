@@ -72,6 +72,14 @@ Implement `autotrust/freeze.py` that extracts Stage 1 outputs into frozen teache
 - [ ] CLI works: `uv run python -m autotrust.freeze`
 - [ ] No existing test is broken
 
+## Review Notes
+- Implemented extract_prompt_pack(), extract_label_rules(), extract_explanation_schema() to parse train.py AST/regex
+- Implemented write_teacher_artifacts() that writes YAML/JSON to teacher/ directory
+- Implemented freeze_teacher() that finds best commit from git history and extracts artifacts
+- Reuses git_history.get_train_py_log() and get_file_at_commit() via thin wrappers (DRY)
+- 7 new tests in test_freeze.py, all pass
+- Deviation: relabel_training_data() deferred -- requires ScoringProvider integration that depends on Wave 4
+
 ## Execution
 - **Agent Type**: coding subagent
 - **Wave**: 2 (parallel with TASK_003, TASK_005; depends on Wave 1)

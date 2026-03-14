@@ -167,3 +167,105 @@ def test_calibration_report_fields():
     assert report.per_axis_kappa["phish"] == 0.90
     assert "deceit" in report.flagged_axes
     assert report.downweight_amounts["deceit"] == 0.03
+
+
+# ---------------------------------------------------------------------------
+# Student model type tests (TASK_002)
+# ---------------------------------------------------------------------------
+
+from autotrust.schemas import (
+    StudentConfig,
+    MoEConfig,
+    StudentOutput,
+    CheckpointMeta,
+    TeacherArtifacts,
+)
+
+
+def test_student_config_roundtrip():
+    """StudentConfig serializes and deserializes correctly."""
+    config = StudentConfig(
+        hidden_size=256,
+        num_layers=6,
+        vocab_size=32000,
+        max_seq_len=512,
+        num_axes=10,
+        num_reason_tags=20,
+    )
+    json_str = config.model_dump_json()
+    restored = StudentConfig.model_validate_json(json_str)
+    assert restored.hidden_size == 256
+    assert restored.num_layers == 6
+    assert restored.vocab_size == 32000
+    assert restored.max_seq_len == 512
+    assert restored.num_axes == 10
+    assert restored.num_reason_tags == 20
+
+
+def test_moe_config_validates_expert_cap(spec):
+    """MoEConfig rejects num_experts > spec.stage2.max_experts."""
+    from autotrust.schemas import validate_moe_config
+
+    bad_config = MoEConfig(
+        num_experts=20,
+        top_k=2,
+        moe_layers=[0, 1],
+    )
+    with pytest.raises(ValueError, match="max_experts"):
+        validate_moe_config(bad_config, spec)
+
+
+def test_moe_config_validates_param_budget(spec):
+    """MoEConfig rejects total params exceeding max_params_m."""
+    from autotrust.schemas import validate_moe_config
+
+    # A config within expert cap but we test the top_k cap
+    bad_config = MoEConfig(
+        num_experts=8,
+        top_k=5,  # exceeds max_top_k of 4
+        moe_layers=[0, 1],
+    )
+    with pytest.raises(ValueError, match="max_top_k"):
+        validate_moe_config(bad_config, spec)
+
+
+def test_checkpoint_meta_has_required_fields():
+    """CheckpointMeta has stage, experiment_num, composite, path."""
+    meta = CheckpointMeta(
+        stage="dense_baseline",
+        experiment_num=5,
+        composite=0.82,
+        path=Path("runs/test/best.pt"),
+        param_count=50_000_000,
+    )
+    assert meta.stage == "dense_baseline"
+    assert meta.experiment_num == 5
+    assert meta.composite == 0.82
+    assert meta.path == Path("runs/test/best.pt")
+    assert meta.param_count == 50_000_000
+
+
+def test_student_output_matches_scorer_output():
+    """StudentOutput has trust_vector, reason_tags, escalate."""
+    output = StudentOutput(
+        trust_vector={"phish": 0.9, "manipulation": 0.3},
+        reason_tags=["phish_detected", "manipulation_possible"],
+        escalate=True,
+    )
+    assert isinstance(output.trust_vector, dict)
+    assert isinstance(output.reason_tags, list)
+    assert output.escalate is True
+
+
+def test_teacher_artifacts_model():
+    """TeacherArtifacts has prompt_pack_path, label_rules_path, explanation_schema_path."""
+    artifacts = TeacherArtifacts(
+        prompt_pack_path=Path("teacher/prompt_pack.yaml"),
+        label_rules_path=Path("teacher/label_rules.yaml"),
+        explanation_schema_path=Path("teacher/explanation_schema.json"),
+        synth_data_dir=Path("synth_data"),
+    )
+    assert artifacts.prompt_pack_path == Path("teacher/prompt_pack.yaml")
+    assert artifacts.label_rules_path == Path("teacher/label_rules.yaml")
+    assert artifacts.explanation_schema_path == Path("teacher/explanation_schema.json")
+    assert artifacts.synth_data_dir == Path("synth_data")

@@ -16,6 +16,7 @@ dependencies = [
     "structlog",
     "datasets",
     "scikit-learn",
+    "torch>=2.0",
 ]
 
 [project.optional-dependencies]
@@ -27,6 +28,9 @@ dashboard = [
     "gradio>=5.0",
     "plotly>=5.0",
     "pandas>=2.0",
+]
+export = [
+    "llama-cpp-python>=0.2",
 ]
 
 [build-system]

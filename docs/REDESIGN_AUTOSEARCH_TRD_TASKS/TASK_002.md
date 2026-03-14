@@ -79,6 +79,13 @@ Add Pydantic models for student model configuration, MoE architecture, checkpoin
 - [ ] All models serialize to JSON and deserialize back correctly
 - [ ] No existing test is broken
 
+## Review Notes
+- Added StudentConfig, MoEConfig, StudentOutput, CheckpointMeta, TeacherArtifacts to schemas.py
+- Added validate_moe_config() that checks num_experts and top_k against spec.stage2 caps
+- StudentOutput.trust_vector shares the same dict[str, float] pattern as ScorerOutput; validate_trust_vector() can be used on it
+- 6 new tests in test_schema_validation.py, all pass
+- All 10 original tests continue to pass
+
 ## Execution
 - **Agent Type**: coding subagent
 - **Wave**: 1 (parallel with TASK_001)

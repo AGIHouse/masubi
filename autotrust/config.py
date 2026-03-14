@@ -55,6 +55,8 @@ class Providers(BaseModel):
 
 class Limits(BaseModel):
     experiment_minutes: int
+    stage1_experiment_minutes: int | None = None
+    stage2_experiment_minutes: int | None = None
     max_spend_usd: float
     per_experiment_timeout_minutes: float = 10.0
 
@@ -92,6 +94,19 @@ class DataConfig(BaseModel):
     train_val_test_split: list[float]
 
 
+class Stage2Config(BaseModel):
+    dense_baseline_first: bool
+    max_experts: int
+    max_params_m: int
+    max_top_k: int
+    export_formats: list[str]
+
+
+class ProductionConfig(BaseModel):
+    judge_fallback_enabled: bool
+    escalate_on_flag: bool
+
+
 class Spec(BaseModel):
     trust_axes: list[AxisDef]
     composite_penalties: dict[str, float]
@@ -103,6 +118,8 @@ class Spec(BaseModel):
     explanation: ExplanationConfig
     safety: SafetyConfig
     data: DataConfig
+    stage2: Stage2Config | None = None
+    production: ProductionConfig | None = None
 
 
 # ---------------------------------------------------------------------------

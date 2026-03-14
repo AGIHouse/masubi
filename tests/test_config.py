@@ -126,3 +126,59 @@ def test_get_effective_weights_zero_weighted_axis(spec):
     kappa["verify_by_search"] = 0.3  # bad Kappa, but weight is 0.0
     effective = get_effective_weights(spec, kappa)
     assert effective["verify_by_search"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Stage 2 / Production config tests (TASK_001)
+# ---------------------------------------------------------------------------
+
+
+def test_spec_has_stage2_section(spec):
+    """spec.stage2 exists after loading."""
+    assert spec.stage2 is not None
+
+
+def test_stage2_dense_baseline_first_default(spec):
+    """stage2.dense_baseline_first defaults to True."""
+    assert spec.stage2.dense_baseline_first is True
+
+
+def test_stage2_max_experts_cap(spec):
+    """stage2.max_experts is 16."""
+    assert spec.stage2.max_experts == 16
+
+
+def test_stage2_max_params_cap(spec):
+    """stage2.max_params_m is 200."""
+    assert spec.stage2.max_params_m == 200
+
+
+def test_stage2_max_top_k_cap(spec):
+    """stage2.max_top_k is 4."""
+    assert spec.stage2.max_top_k == 4
+
+
+def test_stage2_export_formats(spec):
+    """stage2.export_formats contains pytorch and gguf."""
+    assert spec.stage2.export_formats == ["pytorch", "gguf"]
+
+
+def test_spec_has_production_section(spec):
+    """spec.production exists after loading."""
+    assert spec.production is not None
+
+
+def test_production_judge_fallback_enabled(spec):
+    """production.judge_fallback_enabled is True."""
+    assert spec.production.judge_fallback_enabled is True
+
+
+def test_production_escalate_on_flag(spec):
+    """production.escalate_on_flag is True."""
+    assert spec.production.escalate_on_flag is True
+
+
+def test_limits_per_stage_times(spec):
+    """limits has stage1_experiment_minutes and stage2_experiment_minutes."""
+    assert spec.limits.stage1_experiment_minutes is not None
+    assert spec.limits.stage2_experiment_minutes is not None

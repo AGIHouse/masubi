@@ -85,6 +85,15 @@ Implement a dense transformer student model in `autotrust/student.py` that takes
 - [ ] `predict()` returns a valid `StudentOutput`
 - [ ] No existing test is broken
 
+## Review Notes
+- Implemented DenseStudent(nn.Module) with embedding, positional encoding, TransformerEncoder, and three heads (trust, reason, escalate)
+- Implemented all four loss functions: compute_trust_loss (MSE after sigmoid), compute_reason_loss (BCE), compute_escalate_loss (BCE), compute_total_loss (weighted sum)
+- Implemented predict() that converts model logits to StudentOutput schema
+- Used StudentConfig from schemas.py -- no duplicate config structures
+- Added torch>=2.0 to pyproject.toml dependencies
+- Added llama-cpp-python optional dependency group for export
+- 8 new tests in test_student_model.py, all pass
+
 ## Execution
 - **Agent Type**: coding subagent
 - **Wave**: 2 (parallel with TASK_004, TASK_005; depends on Wave 1)

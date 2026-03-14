@@ -88,6 +88,8 @@ providers:
 
 limits:
   experiment_minutes: 15
+  stage1_experiment_minutes: 15
+  stage2_experiment_minutes: 10
   max_spend_usd: 8
   per_experiment_timeout_minutes: 10
 
@@ -118,3 +120,14 @@ data:
   gold_set_size: 200
   synth_real_ratio: 0.7
   train_val_test_split: [0.70, 0.15, 0.15]
+
+stage2:
+  dense_baseline_first: true
+  max_experts: 16
+  max_params_m: 200
+  max_top_k: 4
+  export_formats: [pytorch, gguf]
+
+production:
+  judge_fallback_enabled: true
+  escalate_on_flag: true
