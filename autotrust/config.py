@@ -80,6 +80,11 @@ class ExplanationConfig(BaseModel):
     min_quality_threshold: float
     gate_after_baseline: bool
 
+    @property
+    def gate_enabled(self) -> bool:
+        """PRD compatibility: gate_enabled = True when mode is 'warn_then_gate' and gate_after_baseline is set."""
+        return self.mode == "warn_then_gate" and self.gate_after_baseline
+
 
 class SafetyConfig(BaseModel):
     synth_placeholder_only: bool

@@ -105,6 +105,13 @@ def handle_pause_resume():
         return "Paused"
 
 
+def _detect_stage(metrics: list[dict]) -> str:
+    """Detect current stage from metrics data."""
+    if any("training_loss" in m for m in metrics):
+        return "Stage 2: Model Training"
+    return "Stage 1: Prompt Optimization"
+
+
 def poll_update():
     """Timer callback for polling live run data (uses shared cache)."""
     status_text = _run_manager.status
@@ -124,9 +131,14 @@ def poll_update():
             charts.gate_timeline([]),
             charts.stall_indicator([]),
             "No experiments yet.",
+            "Stage 1: Prompt Optimization",
+            charts.training_loss([]),
+            charts.param_count_timeline([]),
+            charts.expert_utilization([]),
         )
 
     total_cost = sum(m.get("cost", 0) for m in metrics)
+    stage_text = _detect_stage(metrics)
 
     return (
         status_text,
@@ -138,6 +150,10 @@ def poll_update():
         charts.gate_timeline(metrics),
         charts.stall_indicator(metrics),
         log_formatter.format_log_stream(metrics),
+        stage_text,
+        charts.training_loss(metrics),
+        charts.param_count_timeline(metrics),
+        charts.expert_utilization(metrics),
     )
 
 
@@ -276,6 +292,11 @@ def _build_live_run_tab():
         max_exp_input = gr.Number(value=50, label="Max Experiments", precision=0)
         status_indicator = gr.Textbox(value="idle", label="Status", interactive=False)
         cost_display = gr.Textbox(value="$0.00", label="Cost So Far", interactive=False)
+        stage_indicator = gr.Textbox(
+            value="Stage 1: Prompt Optimization",
+            label="Current Stage",
+            interactive=False,
+        )
 
     # Row 0.5 -- Summary Stats
     with gr.Row():
@@ -297,7 +318,16 @@ def _build_live_run_tab():
         with gr.Column():
             stall_plot = gr.Plot(label="Stall Indicator")
 
-    # Row 3 -- Log Stream
+    # Row 3 -- Stage 2 Charts (visible when Stage 2 data exists)
+    with gr.Row():
+        with gr.Column():
+            training_loss_plot = gr.Plot(label="Training Loss (Stage 2)")
+        with gr.Column():
+            param_count_plot = gr.Plot(label="Parameter Count (Stage 2)")
+        with gr.Column():
+            expert_util_plot = gr.Plot(label="Expert Utilization (Stage 2)")
+
+    # Row 4 -- Log Stream
     with gr.Row():
         log_stream = gr.Markdown(value="No experiments yet.")
 
@@ -321,6 +351,10 @@ def _build_live_run_tab():
             gate_plot,
             stall_plot,
             log_stream,
+            stage_indicator,
+            training_loss_plot,
+            param_count_plot,
+            expert_util_plot,
         ],
     )
 

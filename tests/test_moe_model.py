@@ -135,7 +135,7 @@ def test_moe_top_k_cap_enforced(student_config, spec):
 
 
 def test_moe_param_budget_enforced(spec):
-    """Model with too many experts exceeding max_params_m raises ValueError."""
+    """Model within budget passes check_param_budget."""
     from autotrust.student import MoEStudent, check_param_budget
     # Create a model that's within budget
     config = StudentConfig(
@@ -150,6 +150,24 @@ def test_moe_param_budget_enforced(spec):
     model = MoEStudent.from_config(config, moe_config)
     # Should not raise for small model
     check_param_budget(model, spec)
+
+
+def test_moe_param_budget_rejection(spec):
+    """Model exceeding max_params_m raises ValueError from check_param_budget."""
+    from autotrust.student import MoEStudent, check_param_budget
+    # Create a deliberately oversized model
+    big_config = StudentConfig(
+        hidden_size=2048,
+        num_layers=24,
+        vocab_size=100000,
+        max_seq_len=1024,
+        num_axes=10,
+        num_reason_tags=20,
+    )
+    moe_config = MoEConfig(num_experts=16, top_k=4, moe_layers=list(range(24)))
+    model = MoEStudent.from_config(big_config, moe_config)
+    with pytest.raises(ValueError, match="exceeds budget"):
+        check_param_budget(model, spec)
 
 
 def test_moe_routing_strategies(student_config):
