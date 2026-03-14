@@ -16,7 +16,7 @@ echo
 # -------------------------------------------------------------------
 # 1. Python dependencies
 # -------------------------------------------------------------------
-echo "--- [1/5] Python dependencies ---"
+echo "--- [1/6] Python dependencies ---"
 if command -v uv &>/dev/null; then
     uv sync --extra dashboard --extra dev
     green "Dependencies installed via uv."
@@ -24,12 +24,20 @@ else
     red "uv not found. Install it: https://docs.astral.sh/uv/getting-started/installation/"
     exit 1
 fi
+
+# Verify PyTorch is available (required for Stage 2 model training)
+if uv run python -c "import torch; print(f'PyTorch {torch.__version__}')" &>/dev/null; then
+    green "PyTorch verified: $(uv run python -c 'import torch; print(torch.__version__)')"
+else
+    yellow "PyTorch not available. Stage 2 (model training) will not work."
+    yellow "Try: uv sync  (torch>=2.0 is in pyproject.toml dependencies)"
+fi
 echo
 
 # -------------------------------------------------------------------
 # 2. Environment file
 # -------------------------------------------------------------------
-echo "--- [2/5] Environment file ---"
+echo "--- [2/6] Environment file ---"
 if [ -f .env ]; then
     # Check if keys are populated
     if grep -qE '^ANTHROPIC_API_KEY=.+' .env && grep -qE '^HYPERBOLIC_API_KEY=.+' .env; then
@@ -53,7 +61,7 @@ echo
 # -------------------------------------------------------------------
 # 3. Ollama + dolphin3 model
 # -------------------------------------------------------------------
-echo "--- [3/5] Ollama model (dolphin3:latest) ---"
+echo "--- [3/6] Ollama model (dolphin3:latest) ---"
 if command -v ollama &>/dev/null; then
     if ollama list 2>/dev/null | grep -q 'dolphin3'; then
         green "dolphin3:latest already available."
@@ -71,7 +79,7 @@ echo
 # -------------------------------------------------------------------
 # 4. Generate datasets
 # -------------------------------------------------------------------
-echo "--- [4/5] Generating datasets ---"
+echo "--- [4/6] Generating datasets ---"
 
 if [ -s eval_set/eval_chains.jsonl ]; then
     green "eval_set/eval_chains.jsonl exists ($(wc -l < eval_set/eval_chains.jsonl) chains)."
@@ -99,9 +107,17 @@ fi
 echo
 
 # -------------------------------------------------------------------
-# 5. Verify
+# 5. Stage 2 directories
 # -------------------------------------------------------------------
-echo "--- [5/5] Verification ---"
+echo "--- [5/6] Stage 2 directories ---"
+mkdir -p teacher
+green "teacher/ directory ready (frozen Stage 1 artifacts will be written here)."
+echo
+
+# -------------------------------------------------------------------
+# 6. Verify
+# -------------------------------------------------------------------
+echo "--- [6/6] Verification ---"
 ok=true
 
 for f in eval_set/eval_chains.jsonl gold_set/gold_candidates.jsonl synth_data/train.jsonl; do
@@ -118,10 +134,20 @@ if grep -qE '^ANTHROPIC_API_KEY=$' .env 2>/dev/null || grep -qE '^HYPERBOLIC_API
     ok=false
 fi
 
+for f in autotrust/student.py autotrust/freeze.py autotrust/export.py autotrust/inference.py; do
+    if [ -f "$f" ]; then
+        green "  $f  OK"
+    else
+        red "  $f  MISSING"
+        ok=false
+    fi
+done
+
 echo
 if [ "$ok" = true ]; then
     green "Setup complete! Run the research loop with:"
-    echo "  uv run python run_loop.py"
+    echo "  uv run python run_loop.py                    # Stage 1: prompt optimization"
+    echo "  uv run python run_loop.py --stage train      # Stage 2: model training"
     echo
     echo "Optional: launch the dashboard in another terminal:"
     echo "  uv run python dashboard.py"

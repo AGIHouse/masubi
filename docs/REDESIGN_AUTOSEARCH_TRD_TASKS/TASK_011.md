@@ -80,6 +80,17 @@ No code tests for documentation changes, but verify:
 - [ ] File layout in README.md matches actual codebase
 - [ ] No existing test is broken
 
+## Review Notes
+- Updated README.md Architecture section with 4-stage pipeline table
+- Added Stage 2 quickstart, export/deployment section, and monitor section
+- Updated file layout to include student.py, freeze.py, export.py, inference.py, teacher/
+- Added stage2 and production config documentation
+- Updated setup.sh from 5 steps to 6 steps: added PyTorch verification and teacher/ directory creation
+- setup.sh verification section now checks for new Stage 2 modules
+- setup.sh completion message shows both --stage prompt and --stage train CLI options
+- pyproject.toml already had torch>=2.0 and export optional group (from earlier tasks)
+- All 5 validation checks pass (README mentions Stage 2, freeze.py, export.py/GGUF; setup.sh mentions torch; pyproject.toml has torch)
+
 ## Execution
 - **Agent Type**: coding subagent
 - **Wave**: 5 (parallel with TASK_010; depends on Wave 4)
