@@ -47,10 +47,12 @@ def test_composite_trend_colors_kept_vs_discarded(sample_metrics):
     from autotrust.dashboard.charts import composite_trend
 
     fig = composite_trend(sample_metrics)
-    # Should have marker colors that include green and red
     assert isinstance(fig, go.Figure)
-    # Check that the figure has data with markers
     assert len(fig.data) >= 1
+    # Verify actual marker colors: green for kept, red for discarded
+    marker_colors = list(fig.data[0].marker.color)
+    assert "green" in marker_colors, "Expected green markers for kept experiments"
+    assert "red" in marker_colors, "Expected red markers for discarded experiments"
 
 
 def test_composite_trend_single_experiment(sample_metrics):

@@ -38,3 +38,6 @@ def show_diff(commit_a_str, commit_b_str, show_discarded):
 
 ## Affected Files
 - `dashboard.py`
+
+## Status: Fixed
+`show_diff()` now calls `git_history.get_discarded_diffs()` when `show_discarded` is True. Displays each discarded experiment with its number, composite score, gate results, and change description in the annotation markdown below the diff.

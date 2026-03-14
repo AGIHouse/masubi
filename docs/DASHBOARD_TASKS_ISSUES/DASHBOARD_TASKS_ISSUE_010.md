@@ -35,3 +35,6 @@ And update `format_log_stream()` to pass `i + 1` as the experiment number.
 
 ## Affected Files
 - `autotrust/dashboard/log_formatter.py`
+
+## Status: Fixed
+Added `experiment_num: int | None = None` parameter to `format_experiment_log_entry()`. When provided, prepends "Exp #N" label. `format_log_stream()` now passes `i + 1` as the experiment number. Updated `test_format_log_entry_kept` to verify "Exp #3" appears.

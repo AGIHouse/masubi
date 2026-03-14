@@ -34,3 +34,6 @@ def _run_wrapper(self, max_experiments: int) -> None:
 
 ## Affected Files
 - `autotrust/dashboard/run_manager.py`
+
+## Status: Fixed
+`_run_wrapper()` now logs exceptions via `logger.exception()`, stores the exception in `self._last_error`, and sets `self._status = "error"`. The dashboard's `poll_update()` displays the error message in the status indicator. Added `test_exception_sets_error_status` test.

@@ -34,3 +34,7 @@ Then import from both `charts.py` and `log_formatter.py`.
 ## Affected Files
 - `autotrust/dashboard/charts.py`
 - `autotrust/dashboard/log_formatter.py`
+- `autotrust/dashboard/utils.py` (new)
+
+## Status: Fixed
+Extracted `is_kept()` into `autotrust/dashboard/utils.py`. Both `charts.py` and `log_formatter.py` now import `from autotrust.dashboard.utils import is_kept as _is_kept`. Added `utils` to `__init__.py` `__all__`.

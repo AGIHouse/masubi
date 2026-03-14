@@ -42,13 +42,14 @@ def discarded_experiment():
 
 
 def test_format_log_entry_kept(kept_experiment):
-    """Format a KEPT experiment with positive delta."""
+    """Format a KEPT experiment with positive delta and experiment number."""
     from autotrust.dashboard.log_formatter import format_experiment_log_entry
 
-    entry = format_experiment_log_entry(kept_experiment, prev_composite=0.693)
+    entry = format_experiment_log_entry(kept_experiment, prev_composite=0.693, experiment_num=3)
     assert "KEPT" in entry
     assert "0.724" in entry
     assert "+" in entry  # positive delta
+    assert "Exp #3" in entry
 
 
 def test_format_log_entry_discarded(discarded_experiment):

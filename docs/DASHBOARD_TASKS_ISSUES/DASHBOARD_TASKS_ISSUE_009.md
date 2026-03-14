@@ -26,3 +26,6 @@ Share a single polling timer and state across tabs. Use a single `gr.Timer` that
 
 ## Affected Files
 - `dashboard.py`
+
+## Status: Fixed
+Added a shared `_poll_cache` dict and `_refresh_poll_cache()` function at module level. Both the Live Run and Optimization tabs now use this shared cache instead of maintaining independent `gr.State` objects. Eliminated the per-tab `gr.State` and `inputs` for polling. Single filesystem read shared across tabs.

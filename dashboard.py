@@ -26,6 +26,30 @@ except Exception:
 
 
 # ---------------------------------------------------------------------------
+# Shared polling cache (Issue 009: avoid duplicated I/O across tabs)
+# ---------------------------------------------------------------------------
+
+_poll_cache: dict = {"line_count": 0, "metrics": [], "run_id": None}
+
+
+def _refresh_poll_cache() -> list[dict]:
+    """Fetch new metrics from disk once, shared by all tabs."""
+    run_id = _run_manager.current_run_id
+    if not run_id:
+        return _poll_cache["metrics"]
+    if run_id != _poll_cache["run_id"]:
+        # New run detected -- reset cache
+        _poll_cache["run_id"] = run_id
+        _poll_cache["line_count"] = 0
+        _poll_cache["metrics"] = []
+    new_records, new_count = data_loader.load_latest_metrics(run_id, _poll_cache["line_count"])
+    if new_records:
+        _poll_cache["metrics"].extend(new_records)
+        _poll_cache["line_count"] = new_count
+    return _poll_cache["metrics"]
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -81,15 +105,16 @@ def handle_pause_resume():
         return "Paused"
 
 
-def poll_update(state):
-    """Timer callback for polling live run data."""
-    run_id = _run_manager.current_run_id
+def poll_update():
+    """Timer callback for polling live run data (uses shared cache)."""
     status_text = _run_manager.status
     if _run_manager.status == "error" and _run_manager.last_error:
         status_text = f"error: {_run_manager.last_error}"
-    if not run_id:
+
+    metrics = _refresh_poll_cache()
+
+    if not metrics:
         return (
-            state,
             status_text,
             "$0.00",
             charts.composite_trend([]),
@@ -100,16 +125,9 @@ def poll_update(state):
             "No experiments yet.",
         )
 
-    new_records, new_count = data_loader.load_latest_metrics(run_id, state["line_count"])
-    if new_records:
-        state["metrics"].extend(new_records)
-        state["line_count"] = new_count
-
-    metrics = state["metrics"]
     total_cost = sum(m.get("cost", 0) for m in metrics)
 
     return (
-        state,
         status_text,
         f"${total_cost:.2f}",
         charts.composite_trend(metrics),
@@ -282,15 +300,12 @@ def _build_live_run_tab():
     stop_btn.click(handle_stop, outputs=[status_indicator])
     pause_btn.click(handle_pause_resume, outputs=[status_indicator])
 
-    # Wire timer for polling
+    # Wire timer for polling (uses shared cache -- no per-tab state)
     timer = gr.Timer(value=2)
-    poll_state = gr.State({"line_count": 0, "metrics": []})
 
     timer.tick(
         poll_update,
-        inputs=[poll_state],
         outputs=[
-            poll_state,
             status_indicator,
             cost_display,
             composite_plot,
@@ -321,30 +336,12 @@ def _build_optimization_tab():
                 headers=["Axis", "Baseline", "Best", "Delta"],
             )
 
-    # Timer for optimization tab updates
+    # Timer for optimization tab updates (uses shared cache -- no per-tab state)
     opt_timer = gr.Timer(value=3)
-    opt_state = gr.State({"line_count": 0, "metrics": []})
 
-    def opt_poll(state):
-        run_id = _run_manager.current_run_id
-        if not run_id:
-            return (
-                state,
-                charts.enhanced_composite_trend([]),
-                charts.axis_improvement_heatmap([]),
-                charts.gate_pass_rate([]),
-                charts.cost_efficiency([]),
-                [],
-            )
-
-        new_records, new_count = data_loader.load_latest_metrics(run_id, state["line_count"])
-        if new_records:
-            state["metrics"].extend(new_records)
-            state["line_count"] = new_count
-
-        metrics = state["metrics"]
+    def opt_poll():
+        metrics = _refresh_poll_cache()
         return (
-            state,
             charts.enhanced_composite_trend(metrics),
             charts.axis_improvement_heatmap(metrics),
             charts.gate_pass_rate(metrics),
@@ -354,9 +351,7 @@ def _build_optimization_tab():
 
     opt_timer.tick(
         opt_poll,
-        inputs=[opt_state],
         outputs=[
-            opt_state,
             opt_composite_plot,
             heatmap_plot,
             gate_rate_plot,
@@ -402,7 +397,7 @@ def _build_run_history_tab():
         run_list = gr.Dataframe(
             headers=["Run ID", "Date", "Experiments", "Best Composite", "Total Cost", "Status"],
             label="Past Runs",
-            interactive=False,
+            interactive=True,
         )
     with gr.Row():
         with gr.Column():
@@ -523,10 +518,31 @@ def _build_config_tab():
                 label="Calibration Report",
                 value=data_loader.load_calibration(),
             )
+    # Compute initial weights data
+    try:
+        from autotrust.config import get_spec, get_effective_weights
+
+        _init_spec = get_spec()
+        _init_cal = data_loader.load_calibration()
+        _init_kappa = _init_cal.get("per_axis_kappa", {})
+        _init_eff = get_effective_weights(_init_spec, _init_kappa)
+        _init_weights = [
+            [
+                a.name,
+                f"{a.weight:.4f}",
+                f"{_init_eff.get(a.name, a.weight):.4f}",
+                f"{_init_kappa.get(a.name, 1.0):.3f}",
+            ]
+            for a in _init_spec.trust_axes
+        ]
+    except Exception:
+        _init_weights = []
+
     with gr.Row():
         weights_table = gr.Dataframe(
             headers=["Axis", "Original Weight", "Effective Weight", "Kappa"],
             label="Current Effective Weights",
+            value=_init_weights,
         )
 
     def refresh_config():

@@ -40,3 +40,6 @@ def _run_wrapper(self, max_experiments: int) -> None:
 
 ## Affected Files
 - `autotrust/dashboard/run_manager.py`
+
+## Status: Fixed
+Moved `from run_loop import run_autoresearch` from module-level to inside `_run_wrapper()`. The dashboard package can now be imported without the full autoresearch stack. Tests updated to patch `run_loop.run_autoresearch` instead of `autotrust.dashboard.run_manager.run_autoresearch`.

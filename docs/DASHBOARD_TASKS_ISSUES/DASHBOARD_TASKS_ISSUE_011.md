@@ -41,3 +41,6 @@ def stop(self) -> None:
 
 ## Affected Files
 - `autotrust/dashboard/run_manager.py`
+
+## Status: Fixed
+`stop()` now uses `join(timeout=30.0)` and checks `self._thread.is_alive()` after join. If the thread is still alive, the method returns early without setting status to "idle", preventing the race condition where a new run could be started while the old one is still running. Added `test_stop_race_condition_thread_still_alive` test.

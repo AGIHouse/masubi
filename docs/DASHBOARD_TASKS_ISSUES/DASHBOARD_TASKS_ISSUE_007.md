@@ -30,3 +30,6 @@ Then use `_budget_limit` in both `poll_update()` and `opt_poll()`.
 
 ## Affected Files
 - `dashboard.py`
+
+## Status: Fixed
+Added `_budget_limit` module-level variable that reads `limits.max_spend_usd` from `spec.yaml` at startup using PyYAML, with a fallback default of $5.00. Both `poll_update()` and `opt_poll()` now use `_budget_limit` instead of hardcoded 5.0.

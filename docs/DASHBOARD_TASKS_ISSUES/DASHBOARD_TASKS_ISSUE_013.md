@@ -18,3 +18,6 @@ Set `interactive=True` on the run list Dataframe to enable built-in Gradio colum
 
 ## Affected Files
 - `dashboard.py`
+
+## Status: Fixed
+Changed `interactive=False` to `interactive=True` on the Run History `gr.Dataframe`, enabling built-in Gradio column sorting.

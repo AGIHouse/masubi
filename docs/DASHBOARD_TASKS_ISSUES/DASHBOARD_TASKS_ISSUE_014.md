@@ -34,3 +34,9 @@ Additionally, `test_composite_trend_colors_kept_vs_discarded` does not verify ac
 ## Affected Files
 - `tests/test_dashboard_integration.py`
 - `tests/test_charts.py`
+
+## Status: Fixed
+1. `test_live_run_tab_has_required_components` now checks for Button, Plot, Markdown, and Number component types.
+2. `test_optimization_tab_has_required_charts` now verifies Dataframe exists and at least 5 Plot components.
+3. `test_composite_trend_colors_kept_vs_discarded` now verifies actual marker colors contain "green" and "red".
+4. `test_diff_viewer_renders_with_mock_data` now verifies commit hash annotations appear in output.

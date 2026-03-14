@@ -19,3 +19,6 @@ Add logic to detect running status: if `metrics.jsonl` exists but `summary.txt` 
 
 ## Affected Files
 - `autotrust/dashboard/data_loader.py`
+
+## Status: Fixed
+Added `elif metrics_path.exists(): info["status"] = "running"` in `list_runs()`. Runs with `metrics.jsonl` but no `summary.txt` now show as "running" instead of "unknown". Added `test_list_runs_detects_running_status` test.

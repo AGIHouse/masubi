@@ -21,3 +21,6 @@ Add `app.load(refresh_config, outputs=[spec_display, calibration_display, weight
 
 ## Affected Files
 - `dashboard.py`
+
+## Status: Fixed
+Added initial weights computation at Config tab build time using `get_spec()` and `get_effective_weights()` (with try/except fallback). The `weights_table` `gr.Dataframe` now receives `value=_init_weights` so it is populated on first render.

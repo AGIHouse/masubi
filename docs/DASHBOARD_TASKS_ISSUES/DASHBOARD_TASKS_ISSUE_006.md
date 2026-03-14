@@ -25,3 +25,6 @@ Create an `enhanced_composite_trend(metrics)` function in `charts.py` that:
 ## Affected Files
 - `autotrust/dashboard/charts.py`
 - `dashboard.py`
+
+## Status: Fixed
+Created `enhanced_composite_trend()` in charts.py with: (1) baseline horizontal dashed line, (2) best-so-far step line in gold, (3) improvement rate annotation. The Optimization tab now uses this enhanced version while the Live Run tab keeps the basic `composite_trend()`. Added `test_enhanced_composite_trend_has_baseline_and_best_so_far` and `test_enhanced_composite_trend_empty` tests.

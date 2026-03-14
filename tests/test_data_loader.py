@@ -74,6 +74,18 @@ def test_list_runs_empty_dir(tmp_path):
     assert runs == []
 
 
+def test_list_runs_detects_running_status(tmp_path, sample_experiment):
+    """Run with metrics.jsonl but no summary.txt should show status 'running'."""
+    from autotrust.dashboard.data_loader import list_runs
+
+    # Create run with only metrics.jsonl (no summary.txt)
+    _create_run_dir(tmp_path, "run_active", [sample_experiment])
+
+    runs = list_runs(base_dir=tmp_path)
+    assert len(runs) == 1
+    assert runs[0]["status"] == "running"
+
+
 def test_load_run_metrics_parses_jsonl(tmp_path, sample_experiment):
     """load_run_metrics returns list of 3 dicts with correct fields."""
     from autotrust.dashboard.data_loader import load_run_metrics

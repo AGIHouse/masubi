@@ -3,8 +3,6 @@
 import subprocess
 from unittest.mock import patch, MagicMock
 
-import pytest
-
 
 def test_get_train_py_log_parses_output():
     """Mock subprocess to return known git log output, verify returns correct dicts."""
@@ -72,6 +70,36 @@ def test_get_file_at_commit_returns_content():
 
     assert "import os" in result
     assert "def main():" in result
+
+
+def test_get_diff_nonzero_returncode_returns_empty():
+    """If git diff returns non-zero exit code, return empty string."""
+    from autotrust.dashboard.git_history import get_diff
+
+    mock_result = MagicMock()
+    mock_result.stdout = "fatal: bad revision 'badref'"
+    mock_result.stderr = "fatal: bad revision 'badref'"
+    mock_result.returncode = 128
+
+    with patch("autotrust.dashboard.git_history.subprocess.run", return_value=mock_result):
+        result = get_diff("abc1234", "def5678")
+
+    assert result == ""
+
+
+def test_get_file_at_commit_nonzero_returncode_returns_empty():
+    """If git show returns non-zero exit code, return empty string."""
+    from autotrust.dashboard.git_history import get_file_at_commit
+
+    mock_result = MagicMock()
+    mock_result.stdout = "fatal: bad object abc1234"
+    mock_result.stderr = "fatal: bad object abc1234"
+    mock_result.returncode = 128
+
+    with patch("autotrust.dashboard.git_history.subprocess.run", return_value=mock_result):
+        result = get_file_at_commit("abc1234")
+
+    assert result == ""
 
 
 def test_subprocess_timeout_handled():

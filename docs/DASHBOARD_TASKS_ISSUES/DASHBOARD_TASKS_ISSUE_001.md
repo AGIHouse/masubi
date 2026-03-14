@@ -29,3 +29,6 @@ Option C: After `run_autoresearch()` starts, scan `runs/` for the most recently 
 - `autotrust/dashboard/run_manager.py`
 - `run_loop.py`
 - `dashboard.py`
+
+## Status: Fixed
+Removed the dashboard-generated run_id. RunManager now detects the actual run_id by scanning the `runs/` directory for newly created subdirectories after `run_autoresearch()` starts. The `_detect_run_id()` method compares pre-launch directory listing against current state and picks the newest new directory. Added `test_exception_sets_error_status` and `test_stop_race_condition_thread_still_alive` tests.

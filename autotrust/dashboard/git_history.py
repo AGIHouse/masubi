@@ -89,6 +89,9 @@ def get_diff(hash_a: str, hash_b: str, file: str = "train.py") -> str:
             text=True,
             timeout=10,
         )
+        if result.returncode != 0:
+            logger.warning("git diff failed (rc=%d): %s", result.returncode, result.stderr)
+            return ""
         return result.stdout
     except subprocess.TimeoutExpired:
         logger.warning("git diff timed out")
@@ -116,6 +119,9 @@ def get_file_at_commit(commit_hash: str, file: str = "train.py") -> str:
             text=True,
             timeout=10,
         )
+        if result.returncode != 0:
+            logger.warning("git show failed (rc=%d): %s", result.returncode, result.stderr)
+            return ""
         return result.stdout
     except subprocess.TimeoutExpired:
         logger.warning("git show timed out")

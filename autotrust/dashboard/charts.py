@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import plotly.graph_objects as go
 
+from autotrust.dashboard.utils import is_kept as _is_kept
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -16,12 +18,6 @@ def _empty_figure(title: str = "") -> go.Figure:
     if title:
         fig.update_layout(title=title)
     return fig
-
-
-def _is_kept(m: dict) -> bool:
-    """Check if all gates passed (experiment was kept)."""
-    gate_results = m.get("gate_results", {})
-    return bool(gate_results) and all(gate_results.values())
 
 
 def _extract_axis_names(metrics: list[dict]) -> list[str]:

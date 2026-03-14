@@ -23,3 +23,6 @@ Additionally, `get_train_py_log()` always returns `"composite": None` for every 
 ## Affected Files
 - `autotrust/dashboard/git_history.py`
 - `dashboard.py`
+
+## Status: Fixed
+`get_train_py_log()` now parses composite scores from commit messages using regex (`composite[=:]\s*[\d.]+`). `show_diff()` now looks up commit metadata from the git log and includes composite score, kept/discarded status for both selected commits in the annotation.

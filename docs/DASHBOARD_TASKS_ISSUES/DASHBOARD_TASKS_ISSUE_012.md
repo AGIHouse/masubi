@@ -27,3 +27,6 @@ return result.stdout
 
 ## Affected Files
 - `autotrust/dashboard/git_history.py`
+
+## Status: Fixed
+Both `get_diff()` and `get_file_at_commit()` now check `result.returncode != 0` after `subprocess.run()`. On non-zero exit, they log a warning with the exit code and stderr, then return empty string. Added `test_get_diff_nonzero_returncode_returns_empty` and `test_get_file_at_commit_nonzero_returncode_returns_empty` tests.

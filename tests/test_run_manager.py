@@ -1,8 +1,7 @@
 """Tests for autotrust/dashboard/run_manager.py -- thread management."""
 
 import time
-import threading
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 
@@ -133,8 +132,6 @@ def test_stop_race_condition_thread_still_alive():
         time.sleep(0.05)
 
         # Patch join timeout to be very short so test doesn't block
-        original_stop = rm.stop
-
         def quick_stop():
             if rm._status not in ("running", "paused"):
                 return

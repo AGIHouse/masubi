@@ -6,4 +6,5 @@ __all__ = [
     "git_history",
     "log_formatter",
     "run_manager",
+    "utils",
 ]

@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-
-def _is_kept(result: dict) -> bool:
-    """Check if all gates passed (experiment was kept)."""
-    gate_results = result.get("gate_results", {})
-    return bool(gate_results) and all(gate_results.values())
+from autotrust.dashboard.utils import is_kept as _is_kept
 
 
 def _gate_symbols(gate_results: dict) -> str:
@@ -28,7 +24,11 @@ def _format_time(wall_time: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
-def format_experiment_log_entry(result: dict, prev_composite: float | None) -> str:
+def format_experiment_log_entry(
+    result: dict,
+    prev_composite: float | None,
+    experiment_num: int | None = None,
+) -> str:
     """Format a single experiment as a collapsed log line.
 
     Example:
@@ -41,6 +41,7 @@ def format_experiment_log_entry(result: dict, prev_composite: float | None) -> s
     kept = _is_kept(result)
 
     time_str = _format_time(wall_time)
+    exp_label = f"Exp #{experiment_num}  " if experiment_num is not None else ""
     status = "KEPT" if kept else "DISCARDED"
 
     if prev_composite is None:
@@ -52,7 +53,7 @@ def format_experiment_log_entry(result: dict, prev_composite: float | None) -> s
 
     gates_str = _gate_symbols(gate_results)
 
-    return f"[{time_str}]  composite={composite:.3f} {delta_str}  {status}  gates: {gates_str}  ${cost:.2f}"
+    return f"[{time_str}] {exp_label}composite={composite:.3f} {delta_str}  {status}  gates: {gates_str}  ${cost:.2f}"
 
 
 def format_experiment_detail(result: dict, prev_best: dict | None) -> str:
@@ -114,7 +115,7 @@ def format_log_stream(metrics: list[dict]) -> str:
     entries = []
     for i, m in enumerate(metrics):
         prev_composite = metrics[i - 1].get("composite") if i > 0 else None
-        entry = format_experiment_log_entry(m, prev_composite)
+        entry = format_experiment_log_entry(m, prev_composite, experiment_num=i + 1)
         entries.append(entry)
 
     # Reverse so newest is first

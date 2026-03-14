@@ -64,6 +64,9 @@ def list_runs(base_dir: Path = Path("runs")) -> list[dict]:
                 elif line.startswith("Run ID:"):
                     pass  # already have it
             info["status"] = "completed"  # has summary = finalized
+        elif metrics_path.exists():
+            # metrics.jsonl exists but no summary.txt = still running
+            info["status"] = "running"
 
         runs.append(info)
 
