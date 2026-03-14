@@ -1,0 +1,119 @@
+trust_axes:
+  - name: phish
+    type: binary
+    metric: f1
+    weight: 0.22
+  - name: truthfulness
+    type: continuous
+    metric: agreement
+    weight: 0.18
+  - name: verify_by_search
+    type: binary
+    metric: f1
+    weight: 0.00
+  - name: manipulation
+    type: continuous
+    metric: agreement
+    weight: 0.13
+  - name: deceit
+    type: continuous
+    metric: recall
+    weight: 0.10
+  - name: vulnerability_risk
+    type: continuous
+    metric: agreement
+    weight: 0.10
+  - name: subtle_toxicity
+    type: continuous
+    metric: agreement
+    weight: 0.08
+  - name: polarization
+    type: continuous
+    metric: agreement
+    weight: 0.05
+  - name: classic_email_metrics
+    type: continuous
+    metric: agreement
+    weight: 0.04
+  - name: authority_impersonation
+    type: continuous
+    metric: agreement
+    weight: 0.10
+
+composite_penalties:
+  false_positive_rate: -0.15
+
+axis_groups:
+  binary:
+    - phish
+    - verify_by_search
+  continuous:
+    - truthfulness
+    - manipulation
+    - deceit
+    - vulnerability_risk
+    - subtle_toxicity
+    - polarization
+    - classic_email_metrics
+    - authority_impersonation
+  subtle:
+    - deceit
+    - subtle_toxicity
+    - polarization
+    - vulnerability_risk
+    - authority_impersonation
+  fast:
+    - phish
+    - verify_by_search
+    - manipulation
+    - classic_email_metrics
+
+providers:
+  generator:
+    backend: local_ollama
+    model: dolphin3:latest
+  scorer:
+    backend: hyperbolic
+    model: meta-llama/Llama-3.1-8B-Instruct
+  judge_primary:
+    backend: anthropic
+    model: claude-opus-4-20250514
+  judge_secondary:
+    backend: anthropic
+    model: claude-sonnet-4-20250514
+  trainer:
+    backend: hyperbolic_gpu
+    model: meta-llama/Llama-3.1-8B-Instruct
+    gpu_type: H100
+
+limits:
+  experiment_minutes: 15
+  max_spend_usd: 8
+
+judge:
+  escalate_threshold: 0.60
+  disagreement_max: 0.20
+  min_gold_kappa: 0.70
+
+calibration:
+  downweight_policy: kappa_proportional
+  redistribute_remainder: true
+  log_downweighted_axes: true
+  scope: composite_only
+
+explanation:
+  mode: warn_then_gate
+  flag_threshold: 0.5
+  min_quality_threshold: 0.5
+  gate_after_baseline: true
+
+safety:
+  synth_placeholder_only: true
+  block_operational_instructions: true
+  real_brands_in_eval: true
+
+data:
+  eval_set_size: 1000
+  gold_set_size: 200
+  synth_real_ratio: 0.7
+  train_val_test_split: [0.70, 0.15, 0.15]

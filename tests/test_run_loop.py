@@ -1,0 +1,156 @@
+"""Tests for run_loop.py -- thin orchestration."""
+
+import pytest
+from pathlib import Path
+from unittest.mock import patch, MagicMock
+from datetime import datetime, timezone
+
+from autotrust.config import load_spec
+from autotrust.schemas import (
+    Email, EmailChain, ScorerOutput, Explanation, ExperimentResult,
+)
+
+
+@pytest.fixture
+def spec():
+    return load_spec(Path(__file__).parent.parent / "spec.yaml")
+
+
+@pytest.fixture
+def axis_names(spec):
+    return [a.name for a in spec.trust_axes]
+
+
+@pytest.fixture
+def mock_scorer_output(axis_names):
+    return ScorerOutput(
+        trust_vector={a: 0.8 for a in axis_names},
+        explanation=Explanation(
+            reasons=["phish", "manipulation"],
+            summary="Suspicious email.",
+        ),
+    )
+
+
+@pytest.fixture
+def sample_chains(axis_names):
+    email = Email(
+        from_addr="test@example.com",
+        to_addr="user@example.com",
+        subject="Test",
+        body="Test email body",
+        timestamp=datetime.now(timezone.utc),
+        reply_depth=0,
+    )
+    return [
+        EmailChain(
+            chain_id=f"eval-{i}",
+            emails=[email],
+            labels={a: 0.5 for a in axis_names},
+            trust_vector={a: 0.5 for a in axis_names},
+            composite=0.5,
+            flags=[],
+        )
+        for i in range(3)
+    ]
+
+
+def test_loop_enforces_time_limit(spec, tmp_path):
+    """Loop exits when wall time exceeds experiment_minutes."""
+    from run_loop import run_autoresearch
+
+    with patch("run_loop.get_spec", return_value=spec), \
+         patch("run_loop.load_calibration") as mock_cal, \
+         patch("run_loop.start_run") as mock_run, \
+         patch("run_loop.load_eval_chains", return_value=[]), \
+         patch("run_loop.load_gold_chains", return_value=[]), \
+         patch("run_loop.finalize_run"), \
+         patch("run_loop.time") as mock_time:
+
+        mock_cal.return_value = MagicMock()
+        mock_run.return_value = MagicMock(run_dir=tmp_path)
+
+        # Simulate time exceeding limit
+        mock_time.time.side_effect = [0, 0, 1000]  # start, check, exceeded
+
+        run_autoresearch(max_experiments=10)
+        # Should exit without running experiments due to time limit
+
+
+def test_loop_enforces_budget_limit(spec, tmp_path):
+    """Loop exits when cost exceeds max_spend_usd."""
+
+    with patch("run_loop.get_spec", return_value=spec), \
+         patch("run_loop.load_calibration") as mock_cal, \
+         patch("run_loop.start_run") as mock_run, \
+         patch("run_loop.load_eval_chains", return_value=[]), \
+         patch("run_loop.load_gold_chains", return_value=[]), \
+         patch("run_loop.finalize_run"):
+
+        mock_cal.return_value = MagicMock()
+        mock_run.return_value = MagicMock(run_dir=tmp_path)
+
+        # Directly test the budget check function
+        from run_loop import _check_budget
+        assert _check_budget(10.0, spec) is True  # over budget
+        assert _check_budget(1.0, spec) is False  # under budget
+
+
+def test_loop_keep_commits_train_py():
+    """When all three gates pass, train.py is committed via git."""
+    from run_loop import _handle_keep_discard
+
+    with patch("run_loop.subprocess") as mock_subprocess:
+        mock_subprocess.run.return_value = MagicMock(returncode=0)
+        _handle_keep_discard(keep=True, experiment_num=1)
+        # Should call git add + git commit
+        assert mock_subprocess.run.call_count >= 2
+
+
+def test_loop_discard_restores_train_py():
+    """When any gate fails, train.py is restored via git checkout."""
+    from run_loop import _handle_keep_discard
+
+    with patch("run_loop.subprocess") as mock_subprocess:
+        mock_subprocess.run.return_value = MagicMock(returncode=0)
+        _handle_keep_discard(keep=False, experiment_num=1)
+        # Should call git checkout
+        calls = [str(c) for c in mock_subprocess.run.call_args_list]
+        assert any("checkout" in c for c in calls)
+
+
+def test_loop_nudges_lora_after_stalls():
+    """After 3 consecutive no-improvement, agent prompt includes LoRA nudge."""
+    from run_loop import _build_agent_prompt
+
+    prompt = _build_agent_prompt(
+        program_md="test program",
+        train_py="test train",
+        last_results=[],
+        consecutive_no_improvement=3,
+    )
+    assert "LoRA" in prompt
+
+
+def test_loop_logs_each_experiment(spec, tmp_path):
+    """Each iteration calls observe.log_experiment()."""
+    from run_loop import _log_iteration
+
+    with patch("run_loop.log_experiment") as mock_log:
+        ctx = MagicMock(run_dir=tmp_path)
+        result = ExperimentResult(
+            run_id="test",
+            change_description="test",
+            per_axis_scores={},
+            composite=0.5,
+            fp_rate=0.05,
+            judge_agreement=0.9,
+            gold_agreement=0.8,
+            explanation_quality=0.7,
+            downweighted_axes=[],
+            gate_results={"composite": True, "gold": True, "explanation": True},
+            cost=1.0,
+            wall_time=60.0,
+        )
+        _log_iteration(ctx, result)
+        mock_log.assert_called_once_with(ctx, result)

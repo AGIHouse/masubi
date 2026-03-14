@@ -1,0 +1,10 @@
+.env
+synth_data/*.jsonl
+runs/
+__pycache__/
+.venv/
+*.pyc
+.ruff_cache/
+*.egg-info/
+dist/
+uv.lock
