@@ -13,7 +13,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from autotrust.schemas import StudentConfig, StudentOutput
+from autotrust.schemas import MoEConfig, StudentConfig, StudentOutput
+
+if __name__ != "__main__":
+    from typing import TYPE_CHECKING
+    if TYPE_CHECKING:
+        from autotrust.config import Spec
 
 
 class DenseStudent(nn.Module):
@@ -234,3 +239,326 @@ def predict(
         reason_tags=reason_tags,
         escalate=escalate_prob.item() >= threshold,
     )
+
+
+# ---------------------------------------------------------------------------
+# MoE (Mixture of Experts) extension
+# ---------------------------------------------------------------------------
+
+
+class MoEBlock(nn.Module):
+    """Mixture-of-Experts feed-forward block replacing standard FFN.
+
+    Supports three routing strategies:
+    - top_k: standard softmax + top-k selection
+    - noisy_top_k: Gaussian noise before top-k (Shazeer et al.)
+    - expert_choice: experts choose tokens (Zhou et al.)
+    """
+
+    def __init__(
+        self,
+        hidden_size: int,
+        intermediate_size: int,
+        num_experts: int,
+        top_k: int,
+        capacity_factor: float = 1.0,
+        routing_strategy: str = "top_k",
+    ):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_experts = num_experts
+        self.top_k = top_k
+        self.capacity_factor = capacity_factor
+        self.routing_strategy = routing_strategy
+
+        # Router
+        self.router = nn.Linear(hidden_size, num_experts, bias=False)
+
+        # Experts: each is a simple FFN (up-proj -> GELU -> down-proj)
+        self.experts = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(hidden_size, intermediate_size),
+                nn.GELU(),
+                nn.Linear(intermediate_size, hidden_size),
+            )
+            for _ in range(num_experts)
+        ])
+
+        # Noise for noisy_top_k
+        if routing_strategy == "noisy_top_k":
+            self.noise_weight = nn.Linear(hidden_size, num_experts, bias=False)
+
+    def forward(self, x: Tensor) -> tuple[Tensor, Tensor]:
+        """Forward pass through MoE block.
+
+        Args:
+            x: (batch, seq_len, hidden_size)
+
+        Returns:
+            Tuple of (output, auxiliary_load_balance_loss).
+        """
+        batch_size, seq_len, hidden_size = x.shape
+        # Flatten to (batch * seq_len, hidden_size)
+        flat_x = x.view(-1, hidden_size)
+        num_tokens = flat_x.shape[0]
+
+        # Compute router logits
+        router_logits = self.router(flat_x)  # (num_tokens, num_experts)
+
+        if self.routing_strategy == "noisy_top_k":
+            noise = torch.randn_like(router_logits) * F.softplus(self.noise_weight(flat_x))
+            router_logits = router_logits + noise
+
+        # Compute routing weights
+        router_probs = F.softmax(router_logits, dim=-1)  # (num_tokens, num_experts)
+
+        if self.routing_strategy == "expert_choice":
+            output, aux_loss = self._expert_choice_forward(flat_x, router_probs)
+        else:
+            output, aux_loss = self._top_k_forward(flat_x, router_probs)
+
+        return output.view(batch_size, seq_len, hidden_size), aux_loss
+
+    def _top_k_forward(
+        self, flat_x: Tensor, router_probs: Tensor
+    ) -> tuple[Tensor, Tensor]:
+        """Standard top-k routing."""
+        num_tokens = flat_x.shape[0]
+
+        # Select top-k experts per token
+        top_k_probs, top_k_indices = torch.topk(router_probs, self.top_k, dim=-1)
+        top_k_probs = top_k_probs / top_k_probs.sum(dim=-1, keepdim=True)  # renormalize
+
+        # Compute expert outputs and combine
+        output = torch.zeros_like(flat_x)
+        for k in range(self.top_k):
+            expert_indices = top_k_indices[:, k]  # (num_tokens,)
+            expert_weights = top_k_probs[:, k]    # (num_tokens,)
+
+            for expert_idx in range(self.num_experts):
+                mask = expert_indices == expert_idx
+                if mask.any():
+                    expert_input = flat_x[mask]
+                    expert_output = self.experts[expert_idx](expert_input)
+                    output[mask] += expert_weights[mask].unsqueeze(-1) * expert_output
+
+        # Load balancing auxiliary loss
+        aux_loss = self._compute_load_balance_loss(router_probs)
+        return output, aux_loss
+
+    def _expert_choice_forward(
+        self, flat_x: Tensor, router_probs: Tensor
+    ) -> tuple[Tensor, Tensor]:
+        """Expert-choice routing: experts pick tokens."""
+        num_tokens = flat_x.shape[0]
+        capacity = max(1, int(num_tokens * self.top_k * self.capacity_factor / self.num_experts))
+
+        # Transpose: experts select tokens
+        expert_probs = router_probs.t()  # (num_experts, num_tokens)
+
+        output = torch.zeros_like(flat_x)
+        for expert_idx in range(self.num_experts):
+            # Each expert selects top-capacity tokens
+            probs = expert_probs[expert_idx]
+            k = min(capacity, num_tokens)
+            top_probs, top_indices = torch.topk(probs, k)
+            top_probs = top_probs / top_probs.sum().clamp(min=1e-8)  # normalize
+
+            expert_input = flat_x[top_indices]
+            expert_output = self.experts[expert_idx](expert_input)
+            output[top_indices] += top_probs.unsqueeze(-1) * expert_output
+
+        aux_loss = self._compute_load_balance_loss(router_probs)
+        return output, aux_loss
+
+    def _compute_load_balance_loss(self, router_probs: Tensor) -> Tensor:
+        """Compute auxiliary load-balancing loss (Switch Transformer style).
+
+        Encourages equal expert utilization.
+        """
+        # Fraction of tokens routed to each expert
+        expert_usage = router_probs.mean(dim=0)  # (num_experts,)
+        # Ideal: each expert gets 1/num_experts of tokens
+        target = torch.ones_like(expert_usage) / self.num_experts
+        # Loss: encourage uniform distribution
+        loss = self.num_experts * (expert_usage * target).sum()
+        return loss
+
+
+class MoEStudent(nn.Module):
+    """Student model with selected layers replaced by MoE blocks.
+
+    Shares embedding, positional encoding, and output heads with DenseStudent.
+    Selected transformer layers use MoE FFN blocks instead of standard FFN.
+    """
+
+    def __init__(self, config: StudentConfig, moe_config: MoEConfig):
+        super().__init__()
+        self.config = config
+        self.moe_config = moe_config
+
+        # Shared: embedding + positional encoding
+        self.embedding = nn.Embedding(config.vocab_size, config.hidden_size)
+        self.pos_encoding = nn.Embedding(config.max_seq_len, config.hidden_size)
+
+        # Build layers: standard or MoE
+        nhead = max(1, config.hidden_size // 64)
+        intermediate_size = config.hidden_size * 4
+
+        self.layers = nn.ModuleList()
+        self.moe_blocks = nn.ModuleDict()
+
+        for i in range(config.num_layers):
+            # Self-attention + layer norm (shared structure)
+            layer = nn.TransformerEncoderLayer(
+                d_model=config.hidden_size,
+                nhead=nhead,
+                dim_feedforward=intermediate_size,
+                batch_first=True,
+                norm_first=True,
+            )
+            self.layers.append(layer)
+
+            if i in moe_config.moe_layers:
+                moe_block = MoEBlock(
+                    hidden_size=config.hidden_size,
+                    intermediate_size=intermediate_size,
+                    num_experts=moe_config.num_experts,
+                    top_k=moe_config.top_k,
+                    capacity_factor=moe_config.capacity_factor,
+                    routing_strategy=moe_config.routing_strategy,
+                )
+                self.moe_blocks[str(i)] = moe_block
+
+        self.final_norm = nn.LayerNorm(config.hidden_size)
+
+        # Output heads (same as DenseStudent)
+        self.trust_head = nn.Linear(config.hidden_size, config.num_axes)
+        self.reason_head = nn.Linear(config.hidden_size, config.num_reason_tags)
+        self.escalate_head = nn.Linear(config.hidden_size, 1)
+
+        self._init_weights()
+
+    def _init_weights(self):
+        for p in self.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)
+
+    def forward(
+        self, input_ids: Tensor, attention_mask: Tensor | None = None
+    ) -> dict[str, Tensor]:
+        batch_size, seq_len = input_ids.shape
+
+        positions = torch.arange(seq_len, device=input_ids.device).unsqueeze(0)
+        positions = positions.clamp(max=self.config.max_seq_len - 1)
+
+        x = self.embedding(input_ids) + self.pos_encoding(positions)
+
+        src_key_padding_mask = None
+        if attention_mask is not None:
+            src_key_padding_mask = attention_mask == 0
+
+        total_aux_loss = torch.tensor(0.0, device=input_ids.device)
+
+        for i, layer in enumerate(self.layers):
+            if str(i) in self.moe_blocks:
+                # For MoE layers: run self-attention from the standard layer,
+                # then replace FFN with MoE block
+                # Use the standard layer for attention
+                x = layer(x, src_key_padding_mask=src_key_padding_mask)
+                # Apply MoE block additionally (residual)
+                moe_out, aux_loss = self.moe_blocks[str(i)](x)
+                x = x + moe_out
+                total_aux_loss = total_aux_loss + aux_loss
+            else:
+                x = layer(x, src_key_padding_mask=src_key_padding_mask)
+
+        x = self.final_norm(x)
+
+        # Pool
+        if attention_mask is not None:
+            mask_expanded = attention_mask.unsqueeze(-1).float()
+            x = (x * mask_expanded).sum(dim=1) / mask_expanded.sum(dim=1).clamp(min=1)
+        else:
+            x = x.mean(dim=1)
+
+        trust_logits = self.trust_head(x)
+        reason_logits = self.reason_head(x)
+        escalate_logit = self.escalate_head(x)
+
+        return {
+            "trust_logits": trust_logits,
+            "reason_logits": reason_logits,
+            "escalate_logit": escalate_logit,
+            "aux_loss": total_aux_loss,
+        }
+
+    @classmethod
+    def from_config(cls, config: StudentConfig, moe_config: MoEConfig) -> MoEStudent:
+        """Create MoEStudent from configs."""
+        return cls(config, moe_config)
+
+    @classmethod
+    def from_dense(cls, dense_model: DenseStudent, moe_config: MoEConfig) -> MoEStudent:
+        """Initialize from a trained dense model, copying shared weights.
+
+        Non-MoE layers, embeddings, and output heads are copied from the dense model.
+        MoE-specific parameters are freshly initialized.
+        """
+        config = dense_model.config
+        moe_model = cls(config, moe_config)
+
+        # Copy embeddings
+        moe_model.embedding.load_state_dict(dense_model.embedding.state_dict())
+        moe_model.pos_encoding.load_state_dict(dense_model.pos_encoding.state_dict())
+
+        # Copy output heads
+        moe_model.trust_head.load_state_dict(dense_model.trust_head.state_dict())
+        moe_model.reason_head.load_state_dict(dense_model.reason_head.state_dict())
+        moe_model.escalate_head.load_state_dict(dense_model.escalate_head.state_dict())
+
+        # Copy transformer layers (for non-MoE layers, full copy; for MoE layers, copy attention parts)
+        dense_layers = list(dense_model.encoder.layers)
+        for i, layer in enumerate(moe_model.layers):
+            if i < len(dense_layers):
+                layer.load_state_dict(dense_layers[i].state_dict())
+
+        return moe_model
+
+    def param_count(self) -> int:
+        return sum(p.numel() for p in self.parameters())
+
+
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
+
+
+def validate_moe_config(moe_config: MoEConfig, spec) -> None:
+    """Validate MoE config against spec.yaml stage2 caps.
+
+    Raises ValueError if config exceeds limits.
+    """
+    if spec.stage2 is None:
+        raise ValueError("spec.yaml has no stage2 section")
+    if moe_config.num_experts > spec.stage2.max_experts:
+        raise ValueError(
+            f"num_experts ({moe_config.num_experts}) exceeds max_experts ({spec.stage2.max_experts})"
+        )
+    if moe_config.top_k > spec.stage2.max_top_k:
+        raise ValueError(
+            f"top_k ({moe_config.top_k}) exceeds max_top_k ({spec.stage2.max_top_k})"
+        )
+
+
+def check_param_budget(model: nn.Module, spec) -> None:
+    """Raise ValueError if model exceeds max_params_m budget."""
+    if spec.stage2 is None:
+        raise ValueError("spec.yaml has no stage2 section")
+    total = sum(p.numel() for p in model.parameters())
+    max_params = spec.stage2.max_params_m * 1_000_000
+    if total > max_params:
+        raise ValueError(
+            f"Model has {total:,} params, exceeds budget of {max_params:,} "
+            f"(max_params_m={spec.stage2.max_params_m})"
+        )

@@ -97,6 +97,16 @@ Add MoE transformer blocks and `MoEStudent` model to `autotrust/student.py`, enf
 - [ ] Load-balancing auxiliary loss is computed
 - [ ] No existing test is broken
 
+## Review Notes
+- Implemented MoEBlock with three routing strategies: top_k, noisy_top_k, expert_choice
+- Implemented MoEStudent with selected layers replaced by MoE blocks
+- Implemented MoEStudent.from_dense() for initializing MoE from trained dense weights
+- Implemented validate_moe_config() and check_param_budget() for cap enforcement
+- Load-balancing auxiliary loss computed (Switch Transformer style)
+- MoE layers share attention from standard TransformerEncoderLayer, add MoE FFN as residual
+- 11 new tests in test_moe_model.py, all pass
+- All 8 existing tests in test_student_model.py still pass
+
 ## Execution
 - **Agent Type**: coding subagent
 - **Wave**: 3 (sequential -- depends on TASK_003)

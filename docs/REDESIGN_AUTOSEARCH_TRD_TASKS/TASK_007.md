@@ -99,6 +99,15 @@ Implement `autotrust/inference.py` with local inference that loads a checkpoint,
 - [ ] Output is a valid `ScorerOutput` compatible with existing eval pipeline
 - [ ] No existing test is broken
 
+## Review Notes
+- Implemented LocalInference class that loads checkpoints and scores text locally
+- Implemented should_escalate() respecting spec.production.escalate_on_flag
+- Implemented score_with_fallback() that calls judge only when escalation triggered
+- Implemented student_output_to_scorer_output() for eval pipeline compatibility
+- Simple byte-level tokenization for inference (production would use trained tokenizer)
+- Reuses predict() from student.py, load_pytorch() from export.py (DRY)
+- 10 new tests in test_inference.py, all pass
+
 ## Execution
 - **Agent Type**: coding subagent
 - **Wave**: 3 (sequential -- depends on TASK_003, TASK_005, TASK_006)

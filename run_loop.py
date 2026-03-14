@@ -7,6 +7,7 @@ enforces budget/time limits, and logs everything.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import subprocess
@@ -97,15 +98,64 @@ def load_gold_chains() -> list[dict[str, float]]:
     return chains
 
 
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse CLI arguments for run_loop.py."""
+    parser = argparse.ArgumentParser(description="Autoresearch loop")
+    parser.add_argument(
+        "--stage",
+        choices=["prompt", "train"],
+        default="prompt",
+        help="Stage to run: 'prompt' (Stage 1) or 'train' (Stage 2)",
+    )
+    parser.add_argument(
+        "--max-experiments",
+        type=int,
+        default=50,
+        help="Maximum number of experiments to run",
+    )
+    return parser.parse_args(argv)
+
+
+def _get_time_limit(spec: Any, stage: str) -> int:
+    """Get per-stage time limit in minutes.
+
+    Falls back to experiment_minutes if per-stage limit not set.
+    """
+    if stage == "train":
+        limit = getattr(spec.limits, "stage2_experiment_minutes", None)
+        return limit if limit is not None else spec.limits.experiment_minutes
+    else:
+        limit = getattr(spec.limits, "stage1_experiment_minutes", None)
+        return limit if limit is not None else spec.limits.experiment_minutes
+
+
+def _should_auto_transition(stage: str, consecutive_no_improvement: int) -> bool:
+    """Check if auto-transition from Stage 1 to Stage 2 should occur."""
+    return stage == "prompt" and consecutive_no_improvement >= 3
+
+
+def _auto_transition(spec: Any) -> str:
+    """Execute auto-transition from Stage 1 to Stage 2.
+
+    Calls freeze_teacher() to extract teacher artifacts, then returns 'train'.
+    """
+    from autotrust.freeze import freeze_teacher
+    logger.info("Auto-transitioning to Stage 2: freezing teacher artifacts...")
+    freeze_teacher(spec)
+    logger.info("Teacher artifacts frozen. Switching to Stage 2.")
+    return "train"
+
+
 def _check_budget(total_cost: float, spec: Any) -> bool:
     """Return True if budget is exceeded."""
     return total_cost >= spec.limits.max_spend_usd
 
 
-def _check_time_limit(start_time: float, spec: Any) -> bool:
+def _check_time_limit(start_time: float, spec: Any, time_limit: int | None = None) -> bool:
     """Return True if time limit is exceeded."""
     elapsed_minutes = (time.time() - start_time) / 60
-    return elapsed_minutes >= spec.limits.experiment_minutes
+    limit = time_limit if time_limit is not None else spec.limits.experiment_minutes
+    return elapsed_minutes >= limit
 
 
 class ExperimentTimeout(Exception):
@@ -241,6 +291,7 @@ def _log_iteration(ctx: Any, result: ExperimentResult) -> None:
 
 def run_autoresearch(
     max_experiments: int = 50,
+    stage: str = "prompt",
     stop_check: Callable[[], bool] | None = None,
     pause_check: Callable[[], bool] | None = None,
 ) -> None:
@@ -276,12 +327,14 @@ def run_autoresearch(
     total_cost = 0.0
     all_results: list[dict] = []
 
+    time_limit = _get_time_limit(spec, stage)
     start_time = time.time()
     logger.info(
         "Starting research loop",
         max_experiments=max_experiments,
+        stage=stage,
         budget_usd=spec.limits.max_spend_usd,
-        time_limit_min=spec.limits.experiment_minutes,
+        time_limit_min=time_limit,
         run_id=run_ctx.run_id,
     )
 
@@ -289,7 +342,7 @@ def run_autoresearch(
         elapsed_total_min = (time.time() - start_time) / 60
 
         # Check limits
-        if _check_time_limit(start_time, spec):
+        if _check_time_limit(start_time, spec, time_limit):
             logger.info("Time limit reached. Stopping.", elapsed_min=f"{elapsed_total_min:.1f}")
             break
         if _check_budget(total_cost, spec):
@@ -449,6 +502,12 @@ def run_autoresearch(
         else:
             consecutive_no_improvement += 1
 
+        # Auto-transition from Stage 1 to Stage 2
+        if _should_auto_transition(stage, consecutive_no_improvement):
+            stage = _auto_transition(spec)
+            time_limit = _get_time_limit(spec, stage)
+            consecutive_no_improvement = 0
+
         # --- Log experiment ---
         total_cost += experiment_cost
         experiment_elapsed = time.time() - experiment_start
@@ -493,4 +552,5 @@ def run_autoresearch(
 
 
 if __name__ == "__main__":
-    run_autoresearch()
+    args = _parse_args()
+    run_autoresearch(max_experiments=args.max_experiments, stage=args.stage)
