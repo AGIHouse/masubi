@@ -7,16 +7,12 @@ to GGUF format for local inference via llama.cpp.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import structlog
 import torch
 import torch.nn as nn
 
 from autotrust.schemas import CheckpointMeta, MoEConfig, StudentConfig
-
-if TYPE_CHECKING:
-    pass
 
 logger = structlog.get_logger()
 
@@ -69,7 +65,7 @@ def load_pytorch(
     Returns:
         Tuple of (model, config, meta).
     """
-    checkpoint = torch.load(checkpoint_path, weights_only=False)
+    checkpoint = torch.load(checkpoint_path, weights_only=True, map_location="cpu")
 
     config = StudentConfig(**checkpoint["config"])
     # Handle Path serialization in meta
@@ -141,7 +137,7 @@ def list_checkpoints(run_dir: Path) -> list[CheckpointMeta]:
 
     for pt_file in sorted(run_dir.glob("*.pt")):
         try:
-            checkpoint = torch.load(pt_file, weights_only=False)
+            checkpoint = torch.load(pt_file, weights_only=True, map_location="cpu")
             meta_data = checkpoint.get("meta", {})
             if isinstance(meta_data.get("path"), str):
                 meta_data["path"] = Path(meta_data["path"])
@@ -154,3 +150,36 @@ def list_checkpoints(run_dir: Path) -> list[CheckpointMeta]:
     # Sort by composite descending
     checkpoints.sort(key=lambda m: m.composite, reverse=True)
     return checkpoints
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Export student model checkpoint")
+    parser.add_argument("--checkpoint", required=True, help="Path to .pt checkpoint")
+    parser.add_argument(
+        "--format",
+        choices=["pytorch", "gguf"],
+        default="pytorch",
+        help="Export format",
+    )
+    parser.add_argument("--output", default=None, help="Output path (default: auto)")
+    args = parser.parse_args()
+
+    checkpoint_path = Path(args.checkpoint)
+    if args.format == "gguf":
+        output_path = Path(args.output) if args.output else checkpoint_path.with_suffix(".gguf")
+        export_gguf(checkpoint_path, output_path)
+        print(f"Exported GGUF to: {output_path}")
+    else:
+        print(f"Checkpoint at {checkpoint_path} is already in PyTorch format.")
+        if checkpoint_path.exists():
+            model, config, meta = load_pytorch(checkpoint_path)
+            print(f"  Stage: {meta.stage}")
+            print(f"  Composite: {meta.composite}")
+            print(f"  Params: {meta.param_count:,}")

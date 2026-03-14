@@ -102,3 +102,53 @@ def test_freeze_from_git_history(monkeypatch, tmp_path, spec):
     artifacts = freeze_teacher(spec, teacher_dir=tmp_path / "teacher")
     assert isinstance(artifacts, TeacherArtifacts)
     assert (tmp_path / "teacher" / "prompt_pack.yaml").exists()
+
+
+def test_relabel_training_data(tmp_path, train_py_source, spec):
+    """relabel_training_data writes updated JSONL with soft trust vectors."""
+    from autotrust.freeze import write_teacher_artifacts, relabel_training_data
+
+    teacher_dir = tmp_path / "teacher"
+    synth_dir = tmp_path / "synth_data"
+    synth_dir.mkdir(parents=True)
+
+    # Create a minimal train.jsonl with existing labels
+    records = [
+        {
+            "chain_id": "c1",
+            "emails": [
+                {
+                    "from_addr": "a@b.com", "to_addr": "c@d.com",
+                    "subject": "Test", "body": "Hello",
+                    "timestamp": "2024-01-01T00:00:00", "reply_depth": 0,
+                }
+            ],
+            "labels": {"phish": 0.8, "truthfulness": 0.5},
+            "trust_vector": {"phish": 0.8, "truthfulness": 0.5},
+            "composite": 0.65,
+            "flags": ["phish"],
+        }
+    ]
+    with open(synth_dir / "train.jsonl", "w") as f:
+        for rec in records:
+            f.write(json.dumps(rec) + "\n")
+
+    # Write teacher artifacts
+    artifacts = write_teacher_artifacts(train_py_source, spec, teacher_dir)
+    # Override synth_data_dir to our tmp location
+    artifacts = TeacherArtifacts(
+        prompt_pack_path=artifacts.prompt_pack_path,
+        label_rules_path=artifacts.label_rules_path,
+        explanation_schema_path=artifacts.explanation_schema_path,
+        synth_data_dir=synth_dir,
+    )
+
+    # Call relabel (will use fallback path since no API provider)
+    output_path = relabel_training_data(artifacts, spec)
+    assert output_path.exists()
+
+    # Verify output has soft_targets
+    output_lines = output_path.read_text().strip().split("\n")
+    assert len(output_lines) == 1
+    output_record = json.loads(output_lines[0])
+    assert "soft_targets" in output_record

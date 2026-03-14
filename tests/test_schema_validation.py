@@ -215,11 +215,10 @@ def test_moe_config_validates_expert_cap(spec):
         validate_moe_config(bad_config, spec)
 
 
-def test_moe_config_validates_param_budget(spec):
-    """MoEConfig rejects total params exceeding max_params_m."""
+def test_moe_config_validates_top_k_cap(spec):
+    """MoEConfig rejects top_k > spec.stage2.max_top_k."""
     from autotrust.schemas import validate_moe_config
 
-    # A config within expert cap but we test the top_k cap
     bad_config = MoEConfig(
         num_experts=8,
         top_k=5,  # exceeds max_top_k of 4

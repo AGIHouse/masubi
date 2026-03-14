@@ -85,6 +85,49 @@ class LocalInference:
         self.model, self.config, self.meta = load_pytorch(checkpoint_path)
         self.model.eval()
 
+    def score(self, chain) -> ScorerOutput:
+        """Score an email chain using the local student model.
+
+        Matches TRD section 4.8 API: score(email_chain) -> ScorerOutput.
+
+        Args:
+            chain: EmailChain object with emails to score
+
+        Returns:
+            ScorerOutput with trust_vector and explanation.
+        """
+        from autotrust.config import get_spec
+        spec = get_spec()
+        axis_names = [a.name for a in spec.trust_axes]
+        reason_tag_names = [f"{a}_flagged" for a in axis_names]
+
+        # Concatenate emails from chain into text
+        text = "\n".join(
+            f"From: {e.from_addr}\nTo: {e.to_addr}\n"
+            f"Subject: {e.subject}\n{e.body}"
+            for e in chain.emails
+        )
+        return self.score_text(text, axis_names, reason_tag_names)
+
+    def should_escalate(self, output: ScorerOutput, spec: Spec) -> bool:
+        """Check if the scoring result should be escalated to cloud judge.
+
+        Method version matching TRD section 4.8 API.
+
+        Args:
+            output: ScorerOutput from scoring
+            spec: loaded Spec with production config
+
+        Returns:
+            True if escalation should occur.
+        """
+        if spec.production is None or not spec.production.escalate_on_flag:
+            return False
+        # Check if any axis score exceeds a high threshold (escalation heuristic)
+        # since ScorerOutput doesn't carry the raw escalate flag
+        # For full pipeline, use the student output's escalate flag directly
+        return any(v >= 0.9 for v in output.trust_vector.values())
+
     def _tokenize_simple(self, text: str) -> torch.Tensor:
         """Simple character-level tokenization for inference.
 

@@ -11,7 +11,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from autotrust.schemas import MoEConfig, StudentConfig, StudentOutput
+from autotrust.schemas import MoEConfig, StudentConfig, StudentOutput, validate_moe_config
 
 
 
@@ -365,22 +365,83 @@ class MoEBlock(nn.Module):
     def _compute_load_balance_loss(self, router_probs: Tensor) -> Tensor:
         """Compute auxiliary load-balancing loss (Switch Transformer style).
 
-        Encourages equal expert utilization.
+        Uses hard top-k assignments for f_i (fraction of tokens dispatched
+        to each expert) and soft probabilities for P_i (mean routing
+        probability per expert). Loss = N * sum(f_i * P_i).
+
+        This encourages balanced routing by penalizing experts that both
+        receive many tokens (high f_i) and have high routing probability (high P_i).
         """
-        # Fraction of tokens routed to each expert
-        expert_usage = router_probs.mean(dim=0)  # (num_experts,)
-        # Ideal: each expert gets 1/num_experts of tokens
-        target = torch.ones_like(expert_usage) / self.num_experts
-        # Loss: encourage uniform distribution
-        loss = self.num_experts * (expert_usage * target).sum()
-        return loss
+        num_tokens = router_probs.shape[0]
+
+        # f_i: fraction of tokens dispatched to each expert (hard assignment)
+        top_k_indices = torch.topk(router_probs, self.top_k, dim=-1).indices
+        dispatch_count = torch.zeros(self.num_experts, device=router_probs.device)
+        for k in range(self.top_k):
+            for expert_idx in range(self.num_experts):
+                dispatch_count[expert_idx] += (top_k_indices[:, k] == expert_idx).float().sum()
+        f = dispatch_count / (num_tokens * self.top_k)
+
+        # P_i: mean routing probability per expert (soft)
+        P = router_probs.mean(dim=0)
+
+        return self.num_experts * (f * P).sum()
+
+
+class TransformerMoELayer(nn.Module):
+    """Custom transformer layer that uses self-attention + MoE FFN.
+
+    Replaces the standard FFN in a transformer layer with a Mixture-of-Experts
+    block. This implements the TRD requirement that MoE "replaces" the FFN
+    rather than being added on top.
+    """
+
+    def __init__(
+        self,
+        d_model: int,
+        nhead: int,
+        moe_block: MoEBlock,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        self.self_attn = nn.MultiheadAttention(
+            d_model, nhead, dropout=dropout, batch_first=True,
+        )
+        self.moe_block = moe_block
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+
+    def forward(
+        self, x: Tensor, src_key_padding_mask: Tensor | None = None,
+    ) -> tuple[Tensor, Tensor]:
+        """Forward pass with pre-norm: norm -> attn -> residual, norm -> MoE -> residual.
+
+        Returns:
+            Tuple of (output, auxiliary_loss).
+        """
+        # Self-attention sublayer (pre-norm)
+        residual = x
+        x = self.norm1(x)
+        x, _ = self.self_attn(x, x, x, key_padding_mask=src_key_padding_mask)
+        x = self.dropout1(x) + residual
+
+        # MoE FFN sublayer (pre-norm) -- replaces standard FFN
+        residual = x
+        x = self.norm2(x)
+        moe_out, aux_loss = self.moe_block(x)
+        x = self.dropout2(moe_out) + residual
+
+        return x, aux_loss
 
 
 class MoEStudent(nn.Module):
     """Student model with selected layers replaced by MoE blocks.
 
     Shares embedding, positional encoding, and output heads with DenseStudent.
-    Selected transformer layers use MoE FFN blocks instead of standard FFN.
+    Selected transformer layers use MoE FFN blocks INSTEAD of standard FFN
+    (true replacement, not additive).
     """
 
     def __init__(self, config: StudentConfig, moe_config: MoEConfig):
@@ -392,25 +453,16 @@ class MoEStudent(nn.Module):
         self.embedding = nn.Embedding(config.vocab_size, config.hidden_size)
         self.pos_encoding = nn.Embedding(config.max_seq_len, config.hidden_size)
 
-        # Build layers: standard or MoE
+        # Build layers: standard TransformerEncoderLayer OR TransformerMoELayer
         nhead = max(1, config.hidden_size // 64)
         intermediate_size = config.hidden_size * 4
 
         self.layers = nn.ModuleList()
-        self.moe_blocks = nn.ModuleDict()
+        self.moe_layer_indices: set[int] = set()
 
         for i in range(config.num_layers):
-            # Self-attention + layer norm (shared structure)
-            layer = nn.TransformerEncoderLayer(
-                d_model=config.hidden_size,
-                nhead=nhead,
-                dim_feedforward=intermediate_size,
-                batch_first=True,
-                norm_first=True,
-            )
-            self.layers.append(layer)
-
             if i in moe_config.moe_layers:
+                # MoE layer: attention + MoE FFN (replaces standard FFN)
                 moe_block = MoEBlock(
                     hidden_size=config.hidden_size,
                     intermediate_size=intermediate_size,
@@ -419,7 +471,23 @@ class MoEStudent(nn.Module):
                     capacity_factor=moe_config.capacity_factor,
                     routing_strategy=moe_config.routing_strategy,
                 )
-                self.moe_blocks[str(i)] = moe_block
+                layer = TransformerMoELayer(
+                    d_model=config.hidden_size,
+                    nhead=nhead,
+                    moe_block=moe_block,
+                )
+                self.layers.append(layer)
+                self.moe_layer_indices.add(i)
+            else:
+                # Standard transformer layer
+                layer = nn.TransformerEncoderLayer(
+                    d_model=config.hidden_size,
+                    nhead=nhead,
+                    dim_feedforward=intermediate_size,
+                    batch_first=True,
+                    norm_first=True,
+                )
+                self.layers.append(layer)
 
         self.final_norm = nn.LayerNorm(config.hidden_size)
 
@@ -452,14 +520,9 @@ class MoEStudent(nn.Module):
         total_aux_loss = torch.tensor(0.0, device=input_ids.device)
 
         for i, layer in enumerate(self.layers):
-            if str(i) in self.moe_blocks:
-                # For MoE layers: run self-attention from the standard layer,
-                # then replace FFN with MoE block
-                # Use the standard layer for attention
-                x = layer(x, src_key_padding_mask=src_key_padding_mask)
-                # Apply MoE block additionally (residual)
-                moe_out, aux_loss = self.moe_blocks[str(i)](x)
-                x = x + moe_out
+            if i in self.moe_layer_indices:
+                # TransformerMoELayer returns (output, aux_loss)
+                x, aux_loss = layer(x, src_key_padding_mask=src_key_padding_mask)
                 total_aux_loss = total_aux_loss + aux_loss
             else:
                 x = layer(x, src_key_padding_mask=src_key_padding_mask)
@@ -494,7 +557,8 @@ class MoEStudent(nn.Module):
         """Initialize from a trained dense model, copying shared weights.
 
         Non-MoE layers, embeddings, and output heads are copied from the dense model.
-        MoE-specific parameters are freshly initialized.
+        MoE-specific parameters (expert FFNs, router) are freshly initialized.
+        For MoE layers, only the self-attention weights are copied from the dense model.
         """
         config = dense_model.config
         moe_model = cls(config, moe_config)
@@ -508,11 +572,28 @@ class MoEStudent(nn.Module):
         moe_model.reason_head.load_state_dict(dense_model.reason_head.state_dict())
         moe_model.escalate_head.load_state_dict(dense_model.escalate_head.state_dict())
 
-        # Copy transformer layers (for non-MoE layers, full copy; for MoE layers, copy attention parts)
+        # Copy transformer layers
         dense_layers = list(dense_model.encoder.layers)
-        for i, layer in enumerate(moe_model.layers):
-            if i < len(dense_layers):
-                layer.load_state_dict(dense_layers[i].state_dict())
+        for i, moe_layer in enumerate(moe_model.layers):
+            if i >= len(dense_layers):
+                break
+            dense_layer = dense_layers[i]
+
+            if i in moe_model.moe_layer_indices:
+                # MoE layer: copy self-attention weights from dense layer
+                # The MoE FFN is freshly initialized (experts start from scratch)
+                moe_attn_state = moe_layer.self_attn.state_dict()
+                dense_attn_state = dense_layer.self_attn.state_dict()
+                # Copy matching keys
+                for key in moe_attn_state:
+                    if key in dense_attn_state:
+                        moe_attn_state[key] = dense_attn_state[key]
+                moe_layer.self_attn.load_state_dict(moe_attn_state)
+                # Copy norm1 from dense (attention norm)
+                moe_layer.norm1.load_state_dict(dense_layer.norm1.state_dict())
+            else:
+                # Standard layer: full copy
+                moe_layer.load_state_dict(dense_layer.state_dict())
 
         return moe_model
 
@@ -524,22 +605,7 @@ class MoEStudent(nn.Module):
 # Validation
 # ---------------------------------------------------------------------------
 
-
-def validate_moe_config(moe_config: MoEConfig, spec) -> None:
-    """Validate MoE config against spec.yaml stage2 caps.
-
-    Raises ValueError if config exceeds limits.
-    """
-    if spec.stage2 is None:
-        raise ValueError("spec.yaml has no stage2 section")
-    if moe_config.num_experts > spec.stage2.max_experts:
-        raise ValueError(
-            f"num_experts ({moe_config.num_experts}) exceeds max_experts ({spec.stage2.max_experts})"
-        )
-    if moe_config.top_k > spec.stage2.max_top_k:
-        raise ValueError(
-            f"top_k ({moe_config.top_k}) exceeds max_top_k ({spec.stage2.max_top_k})"
-        )
+# validate_moe_config is imported from autotrust.schemas (single source of truth)
 
 
 def check_param_budget(model: nn.Module, spec) -> None:

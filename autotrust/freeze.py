@@ -294,3 +294,141 @@ def freeze_teacher(
     artifacts = write_teacher_artifacts(source, spec, teacher_dir)
     logger.info("Teacher artifacts frozen", teacher_dir=str(teacher_dir))
     return artifacts
+
+
+# ---------------------------------------------------------------------------
+# Re-label training data
+# ---------------------------------------------------------------------------
+
+
+def relabel_training_data(artifacts: TeacherArtifacts, spec: Spec) -> Path:
+    """Re-label training data using frozen teacher prompts.
+
+    Loads existing synth_data/train.jsonl, scores each chain using the
+    frozen teacher prompts via ScoringProvider, and writes updated JSONL
+    with soft trust vectors as training targets.
+
+    Args:
+        artifacts: frozen teacher artifacts with paths
+        spec: loaded Spec
+
+    Returns:
+        Path to the output labeled JSONL file.
+    """
+    # Load prompt pack for context
+    prompt_pack_path = artifacts.prompt_pack_path
+    if prompt_pack_path.exists():
+        prompt_pack = yaml.safe_load(prompt_pack_path.read_text())
+        logger.info("Loaded prompt pack for relabeling", keys=list(prompt_pack.keys()))
+
+    # Determine input/output paths
+    synth_dir = artifacts.synth_data_dir
+    input_path = synth_dir / "train.jsonl"
+    output_path = synth_dir / "train_labeled.jsonl"
+
+    if not input_path.exists():
+        logger.warning("No training data found at %s", input_path)
+        return output_path
+
+    # Read input records
+    records = []
+    for line in input_path.read_text().strip().split("\n"):
+        if line.strip():
+            records.append(json.loads(line))
+
+    if not records:
+        logger.warning("Empty training data at %s", input_path)
+        return output_path
+
+    # Score each record using the scoring provider
+    try:
+        from autotrust.providers import get_provider
+        scorer_provider = get_provider("scorer", spec)
+    except Exception as exc:
+        logger.warning(
+            "Could not initialize scoring provider for relabeling: %s. "
+            "Using existing labels as soft targets.",
+            exc,
+        )
+        # Fallback: use existing labels as soft targets
+        labeled_records = []
+        for record in records:
+            labeled = dict(record)
+            # Use existing labels/trust_vector as soft targets
+            if "trust_vector" not in labeled and "labels" in labeled:
+                labeled["soft_targets"] = labeled["labels"]
+            elif "trust_vector" in labeled:
+                labeled["soft_targets"] = labeled["trust_vector"]
+            labeled_records.append(labeled)
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w") as f:
+            for rec in labeled_records:
+                f.write(json.dumps(rec) + "\n")
+
+        logger.info(
+            "Wrote labeled training data (from existing labels)",
+            count=len(labeled_records),
+            path=str(output_path),
+        )
+        return output_path
+
+    # Full relabeling with scoring provider
+    from autotrust.schemas import EmailChain
+
+    labeled_records = []
+    for record in records:
+        try:
+            # Parse record as EmailChain if possible
+            chain = EmailChain.model_validate(record)
+            # Build text from chain
+            text = "\n".join(
+                f"From: {e.from_addr}\nTo: {e.to_addr}\n"
+                f"Subject: {e.subject}\n{e.body}"
+                for e in chain.emails
+            )
+            # Score using the provider (this calls the teacher LLM)
+            scorer_output = scorer_provider.score(text, spec)
+            labeled = dict(record)
+            labeled["soft_targets"] = scorer_output.trust_vector
+            labeled_records.append(labeled)
+        except Exception as exc:
+            logger.warning("Failed to relabel record: %s", exc)
+            # Keep original record with existing labels as fallback
+            labeled = dict(record)
+            if "labels" in labeled:
+                labeled["soft_targets"] = labeled["labels"]
+            labeled_records.append(labeled)
+
+    # Write output
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w") as f:
+        for rec in labeled_records:
+            f.write(json.dumps(rec, default=str) + "\n")
+
+    logger.info(
+        "Wrote labeled training data",
+        count=len(labeled_records),
+        path=str(output_path),
+    )
+    return output_path
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
+
+
+if __name__ == "__main__":
+    import argparse
+    from autotrust.config import load_spec
+
+    parser = argparse.ArgumentParser(description="Freeze teacher artifacts")
+    parser.add_argument("--run-id", default=None, help="Run ID for context")
+    parser.add_argument("--teacher-dir", default=None, help="Output directory for teacher artifacts")
+    args = parser.parse_args()
+
+    spec = load_spec()
+    teacher_dir = Path(args.teacher_dir) if args.teacher_dir else None
+    artifacts = freeze_teacher(spec, teacher_dir=teacher_dir, run_id=args.run_id)
+    print(f"Teacher artifacts frozen to: {artifacts.prompt_pack_path.parent}")

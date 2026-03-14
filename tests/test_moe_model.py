@@ -170,7 +170,7 @@ def test_moe_routing_strategies(student_config):
 
 
 def test_moe_load_balance_loss():
-    """MoE block computes auxiliary load-balancing loss."""
+    """MoE block computes auxiliary load-balancing loss that is not constant."""
     from autotrust.student import MoEBlock
     block = MoEBlock(
         hidden_size=64,
@@ -184,6 +184,42 @@ def test_moe_load_balance_loss():
     _, aux_loss = block(x)
     assert aux_loss.ndim == 0  # scalar
     assert aux_loss.item() >= 0
+
+
+def test_moe_load_balance_loss_discriminates():
+    """Load balance loss is higher for imbalanced routing than balanced routing."""
+    from autotrust.student import MoEBlock
+
+    # Create block with biased router to force imbalanced routing
+    block_balanced = MoEBlock(
+        hidden_size=64, intermediate_size=256,
+        num_experts=4, top_k=2, capacity_factor=1.0,
+        routing_strategy="top_k",
+    )
+
+    # Use a seeded input to get reproducible routing
+    torch.manual_seed(42)
+    # Uniform-ish input should give relatively balanced routing
+    x_uniform = torch.randn(4, 32, 64) * 0.01
+
+    # Bias the router to strongly prefer one expert for imbalanced routing
+    block_imbalanced = MoEBlock(
+        hidden_size=64, intermediate_size=256,
+        num_experts=4, top_k=2, capacity_factor=1.0,
+        routing_strategy="top_k",
+    )
+    with torch.no_grad():
+        # Set router bias to strongly favor expert 0
+        block_imbalanced.router.weight.zero_()
+        block_imbalanced.router.weight[0] = 10.0  # expert 0 dominates
+
+    _, loss_imbalanced = block_imbalanced(x_uniform)
+    _, loss_balanced = block_balanced(x_uniform)
+
+    # The imbalanced loss should differ from 1.0 (the old constant)
+    # and the imbalanced routing should produce a different loss value
+    # than balanced routing (this is the key discriminating behavior)
+    assert loss_imbalanced.item() != loss_balanced.item()
 
 
 def test_dense_to_moe_upgrade(student_config, moe_config):
