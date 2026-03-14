@@ -206,3 +206,49 @@ Wave 5 (parallel -- dashboard + docs):
 Wave 6 (final -- cleanup):
   TASK_012: Full test suite run, DRY review, dead code removal
 ```
+
+---
+
+## Review Summary
+
+**Review Date**: 2026-03-14
+**Reviewer**: Claude Opus 4.6 (ML/Python domain experts)
+**Test Suite**: 247 passed, 0 failed
+
+### Issue Counts by Severity
+
+| Severity | Count |
+|----------|-------|
+| Critical | 2 |
+| High     | 2 |
+| Medium   | 6 |
+| Low      | 4 |
+| **Total** | **14** |
+
+### Requirements Coverage
+
+| TRD Section | Status | Notes |
+|-------------|--------|-------|
+| 4.1 spec.yaml extensions | Met | Stage2Config, ProductionConfig, per-stage limits all implemented |
+| 4.2 Teacher artifact freezing | Partially met | Freeze works but `relabel_training_data()` not implemented (ISSUE_003) |
+| 4.3 Student model architecture | Met | Dense and MoE models implemented with cap enforcement |
+| 4.4 train.py lifecycle | Not met | train.py rewrite at handoff not implemented (ISSUE_002) |
+| 4.5 run_loop.py changes | Partially met | CLI and auto-transition exist but Stage 2 execution path missing (ISSUE_001) |
+| 4.6 eval.py changes | Met | Eval is stage-agnostic as designed |
+| 4.7 Export pipeline | Partially met | PyTorch export works; GGUF is placeholder; CLI missing (ISSUE_010) |
+| 4.8 Production inference | Partially met | LocalInference works but API differs from TRD (ISSUE_007) |
+| 4.9 Dashboard changes | Partially met | Charts implemented but not integrated into dashboard UI (ISSUE_009) |
+| 4.10 Documentation | Met | README, program.md, setup.sh all updated |
+
+### Critical Items
+
+1. **ISSUE_001**: Stage 2 execution path is a no-op -- `--stage train` runs identical code to `--stage prompt`. The entire Stage 2 pipeline (subprocess execution, checkpoint evaluation) is missing from `run_loop.py`.
+2. **ISSUE_002**: `train.py` archive and Stage 2 template rewrite not implemented. After auto-transition, the system continues using the Stage 1 prompt-based `train.py`.
+
+### Tests Passing
+
+All 247 tests pass. However, tests for Stage 2 execution path are absent -- tests only verify helper functions (CLI parsing, time limits, auto-transition trigger) but not the actual Stage 2 behavior.
+
+### Recommendation
+
+**Needs rework.** The skeleton is well-built -- models, schemas, loss functions, charts, and export pipeline are solid. However, the critical integration in `run_loop.py` that actually makes Stage 2 functional is missing. Issues 001, 002, 003, and 008 must be resolved before the system can transition from Stage 1 to Stage 2 and run a training loop.
