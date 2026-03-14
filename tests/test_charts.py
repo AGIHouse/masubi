@@ -215,3 +215,80 @@ def test_run_comparison_returns_grouped_bar(sample_metrics):
     fig = run_comparison(sample_metrics, metrics2)
     assert isinstance(fig, go.Figure)
     assert len(fig.data) >= 2  # two groups
+
+
+# ---------------------------------------------------------------------------
+# Stage 2 charts (TASK_010)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def stage2_metrics():
+    """Stage 2 metrics with training loss and param count."""
+    return [
+        {
+            "composite": 0.65,
+            "training_loss": {"trust_loss": 0.5, "reason_loss": 0.3, "escalate_loss": 0.2, "total_loss": 1.0},
+            "param_count": 50_000_000,
+            "gate_results": {"composite": True, "gold": True, "explanation": True},
+        },
+        {
+            "composite": 0.72,
+            "training_loss": {"trust_loss": 0.4, "reason_loss": 0.25, "escalate_loss": 0.15, "total_loss": 0.8},
+            "param_count": 75_000_000,
+            "gate_results": {"composite": True, "gold": True, "explanation": True},
+        },
+        {
+            "composite": 0.78,
+            "training_loss": {"trust_loss": 0.3, "reason_loss": 0.2, "escalate_loss": 0.1, "total_loss": 0.6},
+            "param_count": 100_000_000,
+            "expert_utilization": [0.25, 0.30, 0.20, 0.25],
+            "gate_results": {"composite": True, "gold": True, "explanation": True},
+        },
+    ]
+
+
+def test_training_loss_chart(stage2_metrics):
+    """charts.training_loss(metrics) returns valid Plotly figure with loss curves."""
+    from autotrust.dashboard.charts import training_loss
+
+    fig = training_loss(stage2_metrics)
+    assert isinstance(fig, go.Figure)
+    assert len(fig.data) >= 1
+
+
+def test_training_loss_empty_for_stage1(sample_metrics):
+    """training_loss returns empty figure when no Stage 2 metrics."""
+    from autotrust.dashboard.charts import training_loss
+
+    fig = training_loss(sample_metrics)
+    assert isinstance(fig, go.Figure)
+    assert len(fig.data) == 0
+
+
+def test_param_count_display(stage2_metrics):
+    """charts.param_count_timeline(metrics) shows parameter count over experiments."""
+    from autotrust.dashboard.charts import param_count_timeline
+
+    fig = param_count_timeline(stage2_metrics)
+    assert isinstance(fig, go.Figure)
+    assert len(fig.data) >= 1
+
+
+def test_expert_utilization_chart(stage2_metrics):
+    """charts.expert_utilization(metrics) returns valid figure."""
+    from autotrust.dashboard.charts import expert_utilization
+
+    fig = expert_utilization(stage2_metrics)
+    assert isinstance(fig, go.Figure)
+    # Only the last metric has expert_utilization, so should have data
+    assert len(fig.data) >= 1
+
+
+def test_expert_utilization_empty(sample_metrics):
+    """expert_utilization returns empty figure with no MoE data."""
+    from autotrust.dashboard.charts import expert_utilization
+
+    fig = expert_utilization(sample_metrics)
+    assert isinstance(fig, go.Figure)
+    assert len(fig.data) == 0

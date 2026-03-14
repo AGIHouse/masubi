@@ -72,6 +72,16 @@ Add stage-aware displays and checkpoint management to the Gradio dashboard.
 - [ ] Dashboard remains functional for Stage 1 only (backward compatible)
 - [ ] No existing test is broken
 
+## Review Notes
+- Added training_loss() chart showing trust/reason/escalate/total loss curves
+- Added param_count_timeline() chart showing model size over experiments
+- Added expert_utilization() heatmap for MoE expert routing visualization
+- All charts return empty figures gracefully when Stage 2 data not present (backward compatible)
+- Reused _empty_figure() helper (DRY)
+- 5 new tests in test_charts.py, all pass
+- Dashboard UI integration (stage indicator, checkpoint list) deferred to integration phase
+- Note: pre-existing test failure in test_enhanced_composite_trend (trace name mismatch) not related to this task
+
 ## Execution
 - **Agent Type**: coding subagent
 - **Wave**: 5 (parallel with TASK_011; depends on Wave 4)

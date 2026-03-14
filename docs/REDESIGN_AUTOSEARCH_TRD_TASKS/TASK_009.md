@@ -91,6 +91,14 @@ No code tests for this task (it's a Markdown file), but verify:
 - [ ] Stage 1 content is preserved exactly
 - [ ] No existing test is broken
 
+## Review Notes
+- Restructured program.md with Stage 1 and Stage 2 headings
+- Stage 1 content preserved exactly (just added heading)
+- Stage 2 section covers: what to optimize, constraints, architecture search path, training data, output shape, gates, budget
+- References spec.yaml values by name (max_experts=16, max_params_m=200M, max_top_k=4)
+- Dense baseline requirement is clearly stated
+- 5 new validation tests in test_smoke.py, all pass
+
 ## Execution
 - **Agent Type**: coding subagent
 - **Wave**: 4 (parallel with TASK_008; depends on Wave 1 for spec.yaml values)

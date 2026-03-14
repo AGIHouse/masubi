@@ -565,6 +565,122 @@ def run_comparison(metrics1: list[dict], metrics2: list[dict]) -> go.Figure:
     return fig
 
 
+# ---------------------------------------------------------------------------
+# Stage 2 charts (Model Training) -- TASK_010
+# ---------------------------------------------------------------------------
+
+
+def training_loss(metrics: list[dict]) -> go.Figure:
+    """Training loss curve for Stage 2 experiments.
+
+    Shows trust_loss, reason_loss, escalate_loss, and total_loss over experiments.
+    Returns empty figure if no Stage 2 training metrics exist.
+    """
+    stage2_metrics = [m for m in metrics if "training_loss" in m]
+    if not stage2_metrics:
+        return _empty_figure("Training Loss")
+
+    x = list(range(1, len(stage2_metrics) + 1))
+
+    fig = go.Figure()
+
+    loss_keys = ["trust_loss", "reason_loss", "escalate_loss", "total_loss"]
+    colors = ["#e74c3c", "#3498db", "#f39c12", "#2ecc71"]
+
+    for key, color in zip(loss_keys, colors):
+        y = [m.get("training_loss", {}).get(key, 0.0) for m in stage2_metrics]
+        if any(v > 0 for v in y):
+            fig.add_trace(
+                go.Scatter(
+                    x=x,
+                    y=y,
+                    mode="lines+markers",
+                    name=key,
+                    line={"color": color},
+                )
+            )
+
+    fig.update_layout(
+        title="Training Loss Over Experiments",
+        xaxis_title="Experiment",
+        yaxis_title="Loss",
+    )
+    return fig
+
+
+def param_count_timeline(metrics: list[dict]) -> go.Figure:
+    """Parameter count over experiments (shows architecture changes).
+
+    Returns empty figure if no param_count data exists.
+    """
+    stage2_metrics = [m for m in metrics if "param_count" in m]
+    if not stage2_metrics:
+        return _empty_figure("Parameter Count Timeline")
+
+    x = list(range(1, len(stage2_metrics) + 1))
+    y = [m.get("param_count", 0) / 1e6 for m in stage2_metrics]  # in millions
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=x,
+            y=y,
+            mode="lines+markers",
+            name="Param Count",
+            line={"color": "#8e44ad"},
+            fill="tozeroy",
+        )
+    )
+    fig.update_layout(
+        title="Model Parameter Count Over Experiments",
+        xaxis_title="Experiment",
+        yaxis_title="Parameters (M)",
+    )
+    return fig
+
+
+def expert_utilization(metrics: list[dict]) -> go.Figure:
+    """Expert utilization heatmap for MoE experiments.
+
+    Returns empty figure if no MoE utilization data exists.
+    """
+    moe_metrics = [m for m in metrics if "expert_utilization" in m]
+    if not moe_metrics:
+        return _empty_figure("Expert Utilization")
+
+    # Build heatmap: rows = experts, columns = experiments
+    num_experts = len(moe_metrics[0].get("expert_utilization", []))
+    if num_experts == 0:
+        return _empty_figure("Expert Utilization")
+
+    z = []
+    for expert_idx in range(num_experts):
+        row = [
+            m.get("expert_utilization", [0] * num_experts)[expert_idx]
+            for m in moe_metrics
+        ]
+        z.append(row)
+
+    x_labels = [str(i + 1) for i in range(len(moe_metrics))]
+    y_labels = [f"Expert {i}" for i in range(num_experts)]
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Heatmap(
+            z=z,
+            x=x_labels,
+            y=y_labels,
+            colorscale="Viridis",
+        )
+    )
+    fig.update_layout(
+        title="Expert Utilization Heatmap",
+        xaxis_title="Experiment",
+        yaxis_title="Expert",
+    )
+    return fig
+
+
 def summary_stats(metrics: list[dict]) -> str:
     """Generate a markdown summary header for the run."""
     if not metrics:

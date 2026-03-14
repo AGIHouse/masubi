@@ -291,3 +291,38 @@ def test_smoke_structured_output_invalid(spec, axis_names):
 
     with pytest.raises(ValueError, match="phish"):
         validate_trust_vector(tv, spec)
+
+
+# ---------------------------------------------------------------------------
+# program.md validation (TASK_009)
+# ---------------------------------------------------------------------------
+
+
+def test_program_md_references_spec_yaml():
+    """program.md mentions spec.yaml."""
+    content = (Path(__file__).parent.parent / "program.md").read_text()
+    assert "spec.yaml" in content
+
+
+def test_program_md_has_stage2_section():
+    """program.md contains Stage 2 heading."""
+    content = (Path(__file__).parent.parent / "program.md").read_text()
+    assert "Stage 2" in content
+
+
+def test_program_md_mentions_dense_baseline():
+    """program.md mentions dense baseline."""
+    content = (Path(__file__).parent.parent / "program.md").read_text()
+    assert "dense baseline" in content.lower()
+
+
+def test_program_md_mentions_moe():
+    """program.md mentions MoE or Mixture of Experts."""
+    content = (Path(__file__).parent.parent / "program.md").read_text()
+    assert "MoE" in content or "Mixture of Experts" in content
+
+
+def test_program_md_mentions_param_budget():
+    """program.md mentions max_params or 200M."""
+    content = (Path(__file__).parent.parent / "program.md").read_text()
+    assert "max_params" in content or "200M" in content

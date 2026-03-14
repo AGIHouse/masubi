@@ -1,3 +1,5 @@
+# Stage 1: Prompt Optimization
+
 You are optimizing a content-only email trust scorer.
 
 Rules:
@@ -28,3 +30,47 @@ Priorities:
 4. When gains stall: LoRA fine-tune via TrainingProvider (auto-terminate GPUs)
 
 Start now.
+
+---
+
+# Stage 2: Student Model Training
+
+You are training a compact student model (50-200M params) to replace the LLM scorer.
+The system auto-transitions to this stage after 3 consecutive no-improvement experiments,
+or you can start here directly with `--stage train`.
+
+## What you optimize (in train.py):
+- Model architecture: hidden size, depth, number of layers
+- Loss weighting across trust axes
+- Optimizer, learning rate schedule, batch size
+- After dense baseline: MoE expert count, routing strategy, capacity factor, which layers are sparse
+
+## What you cannot change:
+- The dataset (frozen Stage 1 outputs in teacher/)
+- The teacher labels (soft trust vectors)
+- The evaluation harness (eval.py)
+- The gold set
+- MoE caps in spec.yaml (max_experts=16, max_params_m=200M, max_top_k=4)
+
+## Architecture search path:
+1. Establish a dense baseline FIRST (prove it converges)
+2. Only then introduce MoE layers
+3. Start with few experts (4-8), increase only if gains stall
+
+## Training data:
+- All Stage 1 synthetic + real labeled chains (synth_data/)
+- Soft teacher scores (not hard labels) as training targets
+- Explanation tags as auxiliary supervision signal
+
+## Output shape:
+train.py must produce a PyTorch checkpoint that, when loaded, outputs:
+  {"trust_vector": {...}, "reason_tags": [...], "escalate": true/false}
+
+## Keep/discard gates:
+Same three gates apply. Composite score must improve, gold-set veto must pass,
+explanation quality must meet threshold. The evaluation uses the student model
+checkpoint instead of the LLM API.
+
+## Budget:
+See spec.yaml limits (currently 10 min / $8 per experiment for Stage 2).
+Use TrainingProvider to rent Hyperbolic H100s. Auto-terminate GPUs when done.

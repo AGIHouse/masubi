@@ -108,6 +108,18 @@ Add stage-aware orchestration to `run_loop.py` with CLI control, auto-transition
 - [ ] Per-stage time limits are respected
 - [ ] No existing test is broken
 
+## Review Notes
+- Added _parse_args() with --stage and --max-experiments CLI arguments
+- Added _get_time_limit() for per-stage time limits with fallback
+- Added _should_auto_transition() and _auto_transition() for Stage 1 -> 2 handoff
+- Updated run_autoresearch() to accept stage parameter
+- Updated _check_time_limit() to accept optional time_limit override
+- Added auto-transition logic in the main loop
+- Updated __main__ block to use CLI parser
+- Fixed pre-existing fragile time mock in test_loop_enforces_time_limit
+- 8 new tests in test_stage_transition.py, all pass
+- 11/12 existing tests pass (test_pause_check_callback_blocks has a pre-existing blocking issue)
+
 ## Execution
 - **Agent Type**: coding subagent
 - **Wave**: 4 (parallel with TASK_009; depends on Wave 3)

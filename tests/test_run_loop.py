@@ -72,8 +72,8 @@ def test_loop_enforces_time_limit(spec, tmp_path):
         mock_cal.return_value = MagicMock()
         mock_run.return_value = MagicMock(run_dir=tmp_path)
 
-        # Simulate time exceeding limit
-        mock_time.time.side_effect = [0, 0, 1000]  # start, check, exceeded
+        # Simulate time exceeding limit (enough values for all time.time() calls)
+        mock_time.time.side_effect = [0, 0, 0, 1000, 1000, 1000]
 
         run_autoresearch(max_experiments=10)
         # Should exit without running experiments due to time limit
