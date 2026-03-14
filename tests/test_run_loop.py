@@ -1,5 +1,7 @@
 """Tests for run_loop.py -- thin orchestration."""
 
+import time
+
 import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -226,6 +228,42 @@ def test_pause_check_callback_blocks(spec, tmp_path):
         )
         # pause_check should have been called (at least once during pause)
         assert pause_calls >= 1
+
+
+# ---------------------------------------------------------------------------
+# Per-experiment timeout tests
+# ---------------------------------------------------------------------------
+
+
+def test_check_experiment_timeout_raises():
+    """_check_experiment_timeout raises ExperimentTimeout when cap exceeded."""
+    from run_loop import _check_experiment_timeout, ExperimentTimeout
+
+    mock_spec = MagicMock()
+    mock_spec.limits.per_experiment_timeout_minutes = 10.0
+
+    # 11 minutes ago -> should raise
+    experiment_start = time.time() - 11 * 60
+    with pytest.raises(ExperimentTimeout):
+        _check_experiment_timeout(experiment_start, mock_spec)
+
+
+def test_check_experiment_timeout_no_raise():
+    """_check_experiment_timeout does not raise when within cap."""
+    from run_loop import _check_experiment_timeout
+
+    mock_spec = MagicMock()
+    mock_spec.limits.per_experiment_timeout_minutes = 10.0
+
+    # 1 minute ago -> should not raise
+    experiment_start = time.time() - 1 * 60
+    _check_experiment_timeout(experiment_start, mock_spec)  # no exception
+
+
+def test_per_experiment_timeout_in_spec(spec):
+    """spec.yaml has per_experiment_timeout_minutes field."""
+    assert hasattr(spec.limits, "per_experiment_timeout_minutes")
+    assert spec.limits.per_experiment_timeout_minutes == 10.0
 
 
 def test_callbacks_default_none_backward_compatible(spec, tmp_path):

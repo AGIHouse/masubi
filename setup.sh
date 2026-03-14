@@ -18,7 +18,7 @@ echo
 # -------------------------------------------------------------------
 echo "--- [1/5] Python dependencies ---"
 if command -v uv &>/dev/null; then
-    uv sync
+    uv sync --extra dashboard --extra dev
     green "Dependencies installed via uv."
 else
     red "uv not found. Install it: https://docs.astral.sh/uv/getting-started/installation/"

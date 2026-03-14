@@ -261,8 +261,13 @@ def run_autoresearch(
     calibration = load_calibration()
     run_ctx = start_run(spec)
 
+    logger.info("Loading eval chains...")
     eval_chains = load_eval_chains()
+    logger.info("Loaded eval chains", count=len(eval_chains))
+
+    logger.info("Loading gold chains...")
     gold_chains = load_gold_chains()
+    logger.info("Loaded gold chains", count=len(gold_chains))
 
     has_baseline = False
     prev_best_composite = 0.0
@@ -272,14 +277,23 @@ def run_autoresearch(
     all_results: list[dict] = []
 
     start_time = time.time()
+    logger.info(
+        "Starting research loop",
+        max_experiments=max_experiments,
+        budget_usd=spec.limits.max_spend_usd,
+        time_limit_min=spec.limits.experiment_minutes,
+        run_id=run_ctx.run_id,
+    )
 
     for experiment_num in range(1, max_experiments + 1):
+        elapsed_total_min = (time.time() - start_time) / 60
+
         # Check limits
         if _check_time_limit(start_time, spec):
-            logger.info("Time limit reached. Stopping.")
+            logger.info("Time limit reached. Stopping.", elapsed_min=f"{elapsed_total_min:.1f}")
             break
         if _check_budget(total_cost, spec):
-            logger.info("Budget limit reached. Stopping.")
+            logger.info("Budget limit reached. Stopping.", spent_usd=f"{total_cost:.2f}")
             break
 
         # Dashboard callbacks: stop and pause
@@ -297,7 +311,14 @@ def run_autoresearch(
             logger.warning("No eval chains available. Stopping.")
             break
 
-        logger.info("--- Experiment %d ---", experiment_num)
+        logger.info(
+            "=== Experiment %d/%d ===",
+            experiment_num,
+            max_experiments,
+            elapsed_min=f"{elapsed_total_min:.1f}",
+            spent_usd=f"${total_cost:.2f}",
+            no_improvement_streak=consecutive_no_improvement,
+        )
 
         experiment_start = time.time()
 
@@ -312,9 +333,12 @@ def run_autoresearch(
 
         # --- Call Anthropic Sonnet to propose train.py edits ---
         experiment_cost = 0.0
+        logger.info("Calling agent (Sonnet) to propose train.py edits...")
         try:
             proposed_edit = _call_agent(prompt, spec)
+            agent_duration = time.time() - experiment_start
             experiment_cost += 0.01  # estimated per-call cost
+            logger.info("Agent responded", duration_sec=f"{agent_duration:.1f}s")
             _check_experiment_timeout(experiment_start, spec)
         except ExperimentTimeout as exc:
             logger.warning("Experiment %d timed out during agent call: %s", experiment_num, exc)
@@ -328,7 +352,9 @@ def run_autoresearch(
         # Apply proposed edit to train.py
         if proposed_edit and proposed_edit.strip() != train_py.strip():
             Path("train.py").write_text(proposed_edit)
+            diff_lines = len(proposed_edit.splitlines()) - len(train_py.splitlines())
             change_desc = f"Agent edit (experiment {experiment_num})"
+            logger.info("Edit applied", lines_delta=f"{diff_lines:+d}", new_lines=len(proposed_edit.splitlines()))
         else:
             change_desc = f"No change proposed (experiment {experiment_num})"
             logger.info("Agent proposed no change. Skipping scoring.")
@@ -336,6 +362,8 @@ def run_autoresearch(
             continue
 
         # --- Score eval chains using modified train.py ---
+        logger.info("Scoring %d eval chains...", len(eval_chains))
+        score_start = time.time()
         try:
             from train import EmailTrustScorer
             from autotrust.providers import get_provider
@@ -343,7 +371,9 @@ def run_autoresearch(
             scorer_provider = get_provider("scorer", spec)
             scorer = EmailTrustScorer(provider=scorer_provider, spec=spec)
             outputs = scorer.score_batch(eval_chains)
+            score_duration = time.time() - score_start
             experiment_cost += 0.02 * len(eval_chains)  # estimated scoring cost
+            logger.info("Scoring complete", chains=len(outputs), duration_sec=f"{score_duration:.1f}s")
             _check_experiment_timeout(experiment_start, spec)
         except ExperimentTimeout as exc:
             logger.warning("Experiment %d timed out during scoring: %s", experiment_num, exc)
@@ -358,6 +388,7 @@ def run_autoresearch(
             continue
 
         # --- Three-gate evaluation ---
+        logger.info("Running three-gate evaluation...")
         predictions = [o.trust_vector for o in outputs]
         ground_truth = [c.labels for c in eval_chains]
         explanations = [o.explanation for o in outputs]
@@ -374,22 +405,38 @@ def run_autoresearch(
 
         composite = compute_composite(per_axis_metrics, spec, calibration, fp_rate=fp_rate)
         composite_improved = composite > prev_best_composite
+        logger.info(
+            "Gate 1 (composite): %.4f -> %s (prev best: %.4f, fp_rate: %.3f)",
+            composite, "PASS" if composite_improved else "FAIL", prev_best_composite, fp_rate,
+        )
 
         # Gate 2: Gold-set veto
         if gold_chains:
             gold_ok, gold_deltas = gold_regression_gate(
                 predictions, gold_chains, prev_best_per_axis, spec
             )
+            regressed = {k: f"{v:.4f}" for k, v in gold_deltas.items() if v < -1e-9}
+            logger.info(
+                "Gate 2 (gold veto): %s%s",
+                "PASS" if gold_ok else "FAIL",
+                f" regressed={regressed}" if regressed else "",
+            )
         else:
             gold_ok = True
             gold_deltas = {}
+            logger.info("Gate 2 (gold veto): SKIP (no gold chains)")
 
         # Gate 3: Explanation gate
         expl_quality = explanation_quality(explanations, predictions, spec)
         expl_ok, expl_mode = explanation_gate(expl_quality, spec, has_baseline)
+        logger.info(
+            "Gate 3 (explanation): quality=%.3f mode=%s -> %s",
+            expl_quality, expl_mode, "PASS" if expl_ok else "FAIL",
+        )
 
         # Keep/discard decision
         keep = keep_or_discard(composite_improved, gold_ok, expl_ok)
+        logger.info("Decision: %s", "KEEP" if keep else "DISCARD")
 
         # --- Git keep/discard ---
         _handle_keep_discard(keep, experiment_num)
@@ -406,11 +453,6 @@ def run_autoresearch(
         total_cost += experiment_cost
         experiment_elapsed = time.time() - experiment_start
         elapsed = time.time() - start_time
-        logger.info(
-            "Experiment %d completed in %.1fs (cap: %.0fm)",
-            experiment_num, experiment_elapsed,
-            spec.limits.per_experiment_timeout_minutes,
-        )
 
         result = ExperimentResult(
             run_id=run_ctx.run_id,
@@ -435,12 +477,19 @@ def run_autoresearch(
         all_results.append(result.model_dump())
 
         logger.info(
-            "Experiment %d: composite=%.4f, keep=%s, gates=%s",
-            experiment_num, composite, keep, result.gate_results,
+            "Experiment %d complete: composite=%.4f %s [%.1fs, $%.2f total, %.1fm elapsed]",
+            experiment_num, composite, "KEPT" if keep else "DISCARDED",
+            experiment_elapsed, total_cost, elapsed / 60,
         )
 
     finalize_run(run_ctx)
-    logger.info("Autoresearch loop complete. %d experiments run.", len(all_results))
+    logger.info(
+        "Research loop complete",
+        experiments=len(all_results),
+        best_composite=f"{prev_best_composite:.4f}",
+        total_cost=f"${total_cost:.2f}",
+        total_time=f"{(time.time() - start_time) / 60:.1f}m",
+    )
 
 
 if __name__ == "__main__":
