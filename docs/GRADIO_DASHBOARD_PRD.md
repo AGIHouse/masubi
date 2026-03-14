@@ -13,25 +13,41 @@ The autoresearch loop (`run_loop.py`) runs autonomously for hours or overnight, 
 
 ## 2. Goal
 
-A researcher can **launch the autoresearch loop from a browser tab**, watch experiments arrive as expandable log entries in real time, see an optimization dashboard showing whether the agent's code changes are improving scores, drill into git diffs of train.py to see what the agent changed, browse past runs, and stop/pause the loop -- all without touching a terminal.
+A researcher can **launch the autoresearch loop from a browser tab**, immediately see a composite trend chart showing whether the agent is improving, watch per-axis radar charts and gate timelines update in real time, scroll down to expandable log entries for detail, drill into git diffs of train.py to see what the agent changed, browse past runs, and stop/pause the loop -- all without touching a terminal.
 
 ## 3. Key Design Principles
 
-1. **Log-first UX**: The primary view is a structured log of experiments -- each line shows experiment number, composite score, kept/discarded, and gate results. Click to expand for full details. This mirrors how researchers naturally monitor long-running processes.
+1. **Charts-first UX**: Graphs are the hero. The primary view leads with a large composite trend chart, per-axis radar, cost burn gauge, and gate timeline -- the researcher's eye should immediately land on "is this going up?" The log stream lives below the charts as a scrollable detail panel.
 
-2. **train.py is agent-edited**: The agent (not a person) modifies train.py. The dashboard provides a git log/diff viewer so researchers can see *what* the agent changed and *whether* those changes improved scores.
+2. **Logs for depth**: Below the prominent charts, a structured log stream shows per-experiment progress as expandable entries. Charts give the signal; logs give the detail.
 
-3. **Text file storage**: All run history is stored in plain text files (JSONL, summary.txt, config.json). No database. The dashboard reads from the filesystem.
+3. **train.py is agent-edited**: The agent (not a person) modifies train.py. The dashboard provides a git log/diff viewer so researchers can see *what* the agent changed and *whether* those changes improved scores.
 
-4. **Minimal invasion**: Only `run_loop.py` gets modified (optional stop/pause callbacks). All other modules remain untouched.
+4. **Text file storage**: All run history is stored in plain text files (JSONL, summary.txt, config.json). No database. The dashboard reads from the filesystem.
+
+5. **Minimal invasion**: Only `run_loop.py` gets modified (optional stop/pause callbacks). All other modules remain untouched.
 
 ## 4. Dashboard Tabs
 
-### 4.1 Live Log (Primary View)
+### 4.1 Live Run (Primary View) -- Charts First
 
-The main tab. Shows experiments as a streaming log with expandable entries.
+The main tab. **Charts dominate the top 2/3 of the viewport.** The log stream is a scrollable panel below.
 
-**Collapsed entry** (one line per experiment):
+**Layout (top to bottom):**
+
+**Row 0 -- Controls**: Start, Stop, Pause/Resume buttons + max_experiments input + status indicator + cost so far.
+
+**Row 1 -- Hero Charts** (large, ~60% of viewport):
+- **Left (wide)**: Composite trend line -- the main signal. Each point is an experiment. Kept experiments are green dots, discarded are red. Clear upward slope = working, flat = stalled. This is the single most important visual.
+- **Right (narrow)**: Cost burn gauge -- cumulative spend vs budget limit line.
+
+**Row 2 -- Secondary Charts** (medium):
+- **Left**: Per-axis radar/spider chart for the latest experiment (or selected experiment).
+- **Center**: Gate timeline -- scatter plot showing pass/fail for each gate across experiments.
+- **Right**: Stall indicator -- consecutive no-improvement count, LoRA nudge threshold marker.
+
+**Row 3 -- Log Stream** (scrollable, bottom ~35%):
+Experiments as expandable log entries, newest first:
 ```
 [14:23:07] Exp #3  composite=0.724 (+0.031)  KEPT  gates: ✓composite ✓gold ✓explanation  $0.03
 [14:21:42] Exp #2  composite=0.693 (+0.012)  KEPT  gates: ✓composite ✓gold ⚠explanation(warn)  $0.02
@@ -45,15 +61,13 @@ The main tab. Shows experiments as a streaming log with expandable entries.
 - Cost breakdown
 - Link to code diff ("View what changed")
 
-**Controls at top**: Start, Stop, Pause/Resume buttons + max_experiments input + status indicator.
-
-**Real-time**: `gr.Timer(every=2)` polls metrics.jsonl and appends new entries.
+**Real-time**: `gr.Timer(every=2)` polls metrics.jsonl, updates all charts and appends new log entries.
 
 ### 4.2 Optimization Dashboard
 
-"Is the agent actually improving?" view. Shows:
+Deeper "is the agent actually improving?" analysis. All charts, no logs.
 
-- **Composite trend line** -- the main signal. Clear upward = working, flat = stalled.
+- **Composite trend line** (large) -- same as Live Run but with more context (baseline markers, best-so-far line, improvement rate annotation).
 - **Per-axis improvement heatmap** -- which axes are improving, which are degrading.
 - **Stall indicator** -- consecutive no-improvement count, LoRA nudge threshold.
 - **Gate pass rate** -- what % of experiments pass all three gates.
