@@ -108,6 +108,20 @@ def _check_time_limit(start_time: float, spec: Any) -> bool:
     return elapsed_minutes >= spec.limits.experiment_minutes
 
 
+class ExperimentTimeout(Exception):
+    """Raised when a single experiment exceeds its time cap."""
+
+
+def _check_experiment_timeout(experiment_start: float, spec: Any) -> None:
+    """Raise ExperimentTimeout if per-experiment time cap is exceeded."""
+    timeout_minutes = spec.limits.per_experiment_timeout_minutes
+    elapsed_minutes = (time.time() - experiment_start) / 60
+    if elapsed_minutes >= timeout_minutes:
+        raise ExperimentTimeout(
+            f"Experiment exceeded {timeout_minutes:.0f}m cap ({elapsed_minutes:.1f}m elapsed)"
+        )
+
+
 def _build_agent_prompt(
     program_md: str,
     train_py: str,
@@ -285,6 +299,8 @@ def run_autoresearch(
 
         logger.info("--- Experiment %d ---", experiment_num)
 
+        experiment_start = time.time()
+
         # Read current files
         program_md = Path("program.md").read_text()
         train_py = Path("train.py").read_text()
@@ -299,6 +315,11 @@ def run_autoresearch(
         try:
             proposed_edit = _call_agent(prompt, spec)
             experiment_cost += 0.01  # estimated per-call cost
+            _check_experiment_timeout(experiment_start, spec)
+        except ExperimentTimeout as exc:
+            logger.warning("Experiment %d timed out during agent call: %s", experiment_num, exc)
+            consecutive_no_improvement += 1
+            continue
         except Exception as exc:
             logger.error("Agent call failed: %s", exc)
             consecutive_no_improvement += 1
@@ -323,6 +344,12 @@ def run_autoresearch(
             scorer = EmailTrustScorer(provider=scorer_provider, spec=spec)
             outputs = scorer.score_batch(eval_chains)
             experiment_cost += 0.02 * len(eval_chains)  # estimated scoring cost
+            _check_experiment_timeout(experiment_start, spec)
+        except ExperimentTimeout as exc:
+            logger.warning("Experiment %d timed out during scoring: %s", experiment_num, exc)
+            Path("train.py").write_text(train_py)
+            consecutive_no_improvement += 1
+            continue
         except Exception as exc:
             logger.error("Scoring failed: %s", exc)
             # Restore train.py on failure
@@ -377,7 +404,13 @@ def run_autoresearch(
 
         # --- Log experiment ---
         total_cost += experiment_cost
+        experiment_elapsed = time.time() - experiment_start
         elapsed = time.time() - start_time
+        logger.info(
+            "Experiment %d completed in %.1fs (cap: %.0fm)",
+            experiment_num, experiment_elapsed,
+            spec.limits.per_experiment_timeout_minutes,
+        )
 
         result = ExperimentResult(
             run_id=run_ctx.run_id,

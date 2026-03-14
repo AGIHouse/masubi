@@ -56,6 +56,7 @@ class Providers(BaseModel):
 class Limits(BaseModel):
     experiment_minutes: int
     max_spend_usd: float
+    per_experiment_timeout_minutes: float = 10.0
 
 
 class JudgeConfig(BaseModel):

@@ -89,6 +89,7 @@ providers:
 limits:
   experiment_minutes: 15
   max_spend_usd: 8
+  per_experiment_timeout_minutes: 10
 
 judge:
   escalate_threshold: 0.60
