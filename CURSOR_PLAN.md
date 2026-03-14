@@ -623,3 +623,63 @@ Platform code is heavily tested (TDD). `train.py` is lightly smoke-tested.
 13. **Smoke tests** (10-chain eval, 1 loop cycle, three-gate + explanation mode verification)
 14. Generate eval_set: `uv run python -m autotrust.data build-eval`
 15. Update README.md
+
+## Task Decomposition & Execution Plan
+
+See `docs/AUTOTRUST_V35_TASKS/` for detailed task files.
+
+### Wave 1 (parallel -- no dependencies)
+| Task | Title | Complexity | Agent Type |
+|------|-------|-----------|------------|
+| TASK_001 | Project Scaffold (pyproject.toml, dirs) | Low | python |
+| TASK_002 | Create spec.yaml | Low | python |
+| TASK_003 | Write annotation_rubric.md | Medium | python |
+
+### Wave 2 (depends on Wave 1)
+| Task | Title | Complexity | Agent Type |
+|------|-------|-----------|------------|
+| TASK_004 | Build config.py (typed spec loader) | Medium | python |
+| TASK_005 | Build schemas.py (pydantic models) | Medium | python |
+| TASK_006 | Build providers/ registry + base classes | Medium | python |
+
+### Wave 3 (depends on Wave 2 -- TASK_006)
+| Task | Title | Complexity | Agent Type |
+|------|-------|-----------|------------|
+| TASK_007 | Build providers/ollama.py | Low | python |
+| TASK_008 | Build providers/hyperbolic.py | High | python |
+| TASK_009 | Build providers/anthropic.py | Medium | python |
+
+### Wave 4 (depends on Waves 2-3)
+| Task | Title | Complexity | Agent Type |
+|------|-------|-----------|------------|
+| TASK_010 | Build data.py (data pipeline) | High | python |
+| TASK_011 | Build eval.py (three-gate eval) | High | python |
+| TASK_012 | Build observe.py (logging + artifacts) | Medium | python |
+
+### Wave 5 (depends on Waves 2-4)
+| Task | Title | Complexity | Agent Type |
+|------|-------|-----------|------------|
+| TASK_013 | Build train.py (baseline scorer) | Medium | python |
+| TASK_014 | Write program.md (agent instructions) | Low | python |
+
+### Wave 6 (depends on Waves 4-5)
+| Task | Title | Complexity | Agent Type |
+|------|-------|-----------|------------|
+| TASK_015 | Build run_loop.py (orchestration) | High | python |
+
+### Wave 7 (depends on Wave 6)
+| Task | Title | Complexity | Agent Type |
+|------|-------|-----------|------------|
+| TASK_016 | Smoke tests (end-to-end) | Medium | python |
+
+### Wave 8 (final -- depends on everything)
+| Task | Title | Complexity | Agent Type |
+|------|-------|-----------|------------|
+| TASK_017 | Update README.md | Low | python |
+| TASK_018 | Final cleanup (tests, DRY, lint) | Medium | python |
+
+### Summary
+- **18 tasks** across **8 waves**
+- **Total tests**: ~85 unit/integration tests across 12 test files
+- **Critical path**: TASK_001 -> TASK_004/005/006 -> TASK_007-009 -> TASK_010/011 -> TASK_013 -> TASK_015 -> TASK_016 -> TASK_018
+- **HUMAN STEP** (not a task): Between TASK_010 (build-gold) and production use, 200 chains need human annotation (2-3 annotators) followed by `calibrate-judge`
