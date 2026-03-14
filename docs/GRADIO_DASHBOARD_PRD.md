@@ -1,0 +1,334 @@
+# Gradio Dashboard PRD/TRD (v2)
+
+## 1. Problem Statement
+
+The autoresearch loop (`run_loop.py`) runs autonomously for hours or overnight, producing experiment results as JSONL files in `runs/<run_id>/metrics.jsonl` and text summaries. Currently there is **no way to**:
+
+- **Monitor a live run** -- the only feedback is structlog JSON printed to stdout.
+- **See progress at a glance** -- no log-style view showing experiments as they arrive.
+- **See if the agent is actually optimizing** -- no composite trend, no improvement signal.
+- **Inspect what the agent changed** -- train.py is agent-edited, but there's no diff viewer showing what changed per experiment.
+- **Browse historical runs** without manual `jq` on raw JSONL files.
+- **Compare code versions** -- no way to see the evolution of train.py across experiments.
+
+## 2. Goal
+
+A researcher can **launch the autoresearch loop from a browser tab**, watch experiments arrive as expandable log entries in real time, see an optimization dashboard showing whether the agent's code changes are improving scores, drill into git diffs of train.py to see what the agent changed, browse past runs, and stop/pause the loop -- all without touching a terminal.
+
+## 3. Key Design Principles
+
+1. **Log-first UX**: The primary view is a structured log of experiments -- each line shows experiment number, composite score, kept/discarded, and gate results. Click to expand for full details. This mirrors how researchers naturally monitor long-running processes.
+
+2. **train.py is agent-edited**: The agent (not a person) modifies train.py. The dashboard provides a git log/diff viewer so researchers can see *what* the agent changed and *whether* those changes improved scores.
+
+3. **Text file storage**: All run history is stored in plain text files (JSONL, summary.txt, config.json). No database. The dashboard reads from the filesystem.
+
+4. **Minimal invasion**: Only `run_loop.py` gets modified (optional stop/pause callbacks). All other modules remain untouched.
+
+## 4. Dashboard Tabs
+
+### 4.1 Live Log (Primary View)
+
+The main tab. Shows experiments as a streaming log with expandable entries.
+
+**Collapsed entry** (one line per experiment):
+```
+[14:23:07] Exp #3  composite=0.724 (+0.031)  KEPT  gates: ✓composite ✓gold ✓explanation  $0.03
+[14:21:42] Exp #2  composite=0.693 (+0.012)  KEPT  gates: ✓composite ✓gold ⚠explanation(warn)  $0.02
+[14:20:15] Exp #1  composite=0.681  KEPT (baseline)  gates: ✓composite ✓gold ⚠explanation(warn)  $0.02
+```
+
+**Expanded entry** (click to reveal):
+- Per-axis scores table (axis name, score, delta from previous)
+- Gate results with reasons (why gold veto passed/failed, explanation quality score)
+- Explanation text (reasons + summary)
+- Cost breakdown
+- Link to code diff ("View what changed")
+
+**Controls at top**: Start, Stop, Pause/Resume buttons + max_experiments input + status indicator.
+
+**Real-time**: `gr.Timer(every=2)` polls metrics.jsonl and appends new entries.
+
+### 4.2 Optimization Dashboard
+
+"Is the agent actually improving?" view. Shows:
+
+- **Composite trend line** -- the main signal. Clear upward = working, flat = stalled.
+- **Per-axis improvement heatmap** -- which axes are improving, which are degrading.
+- **Stall indicator** -- consecutive no-improvement count, LoRA nudge threshold.
+- **Gate pass rate** -- what % of experiments pass all three gates.
+- **Cost efficiency** -- composite improvement per dollar spent.
+- **Best scores table** -- current best per-axis scores vs initial baseline.
+
+### 4.3 Code Evolution (Git Diff Viewer)
+
+train.py is the only mutable file. This tab shows its evolution:
+
+- **Git log for train.py** -- chronological list of experiment commits:
+  ```
+  abc1234  experiment 5: keep   composite=0.752  2024-03-14 14:35
+  def5678  experiment 3: keep   composite=0.724  2024-03-14 14:23
+  890abcd  experiment 1: keep   composite=0.681  2024-03-14 14:20
+  ```
+- **Side-by-side diff** -- select any two versions to compare. Shows what the agent added/removed/changed.
+- **Discarded changes** -- toggle to see diffs of experiments that were discarded (reverted). Helps understand what the agent tried but didn't work.
+- **Change annotations** -- for each diff, show the corresponding composite score, gate results, and whether it was kept.
+
+### 4.4 Run History
+
+Browse all past runs. Each run is a directory of text files.
+
+- **Run list** -- table showing: run_id, date, experiment count, best composite, total cost, status (completed/stopped/running).
+- **Sort/filter** by date, composite, cost.
+- **Run detail** -- click to see full metrics.jsonl rendered as a log + charts.
+- **Side-by-side comparison** -- select two runs, see grouped bar chart of best metrics.
+- **Export** -- download metrics.jsonl or summary.txt directly.
+
+### 4.5 Axes Explorer
+
+Per-axis deep dive:
+
+- **Multi-line time series** -- checkboxes to select axes, see trends across experiments.
+- **Kappa downweight visualization** -- bar chart showing per-axis Kappa with threshold line.
+- **Axis correlation** -- which axes improve/degrade together.
+
+### 4.6 Config
+
+Read-only reference:
+
+- `spec.yaml` rendered in a code block.
+- Calibration report (if exists) as formatted JSON.
+- Current effective weights (after Kappa downweighting).
+
+## 5. Technical Design
+
+### 5.1 Architecture
+
+```
+dashboard.py                      # Gradio Blocks app entry point
+autotrust/dashboard/              # Dashboard support package
+    __init__.py
+    run_manager.py                # Thread mgmt for run_loop (start/stop/pause)
+    data_loader.py                # Read runs/ text files, parse JSONL
+    git_history.py                # Parse train.py git log, generate diffs
+    charts.py                     # Plotly figure builders
+    log_formatter.py              # Format experiment results as log entries
+```
+
+### 5.2 Data Flow
+
+```
+run_loop.py (background thread)
+    |
+    | writes to filesystem (text files)
+    v
+runs/<run_id>/metrics.jsonl     <--- data_loader.py reads
+runs/<run_id>/config.json            (polled by gr.Timer every 2s)
+runs/<run_id>/summary.txt            |
+gold_set/calibration.json           v
+spec.yaml                      log_formatter.py formats
+                                charts.py builds figures
+    |                                |
+    v                                v
+git log --follow train.py       dashboard.py renders in Gradio
+    |
+    v
+git_history.py parses
+```
+
+### 5.3 Run Manager (`run_manager.py`)
+
+```python
+class RunManager:
+    """Manages the autoresearch loop in a background thread."""
+
+    def __init__(self):
+        self._thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
+        self._pause_event = threading.Event()
+        self._current_run_id: str | None = None
+        self._status: str = "idle"  # idle | running | paused | stopping
+
+    def start(self, max_experiments: int = 50) -> str:
+        """Launch run_autoresearch in a daemon thread. Returns run_id."""
+
+    def stop(self) -> None:
+        """Signal graceful stop after current experiment."""
+
+    def pause(self) -> None:
+        """Pause between experiments."""
+
+    def resume(self) -> None:
+        """Resume from pause."""
+
+    @property
+    def status(self) -> str: ...
+
+    @property
+    def current_run_id(self) -> str | None: ...
+```
+
+**Hook into `run_loop.py`**: Add optional `stop_check` and `pause_check` callback parameters to `run_autoresearch()`. Minimal change -- backward-compatible.
+
+### 5.4 Data Loader (`data_loader.py`)
+
+All functions read plain text files. No database.
+
+```python
+def list_runs(base_dir: Path = Path("runs")) -> list[dict]:
+    """List all runs with metadata from summary.txt and metrics.jsonl."""
+
+def load_run_metrics(run_id: str, base_dir: Path = Path("runs")) -> list[dict]:
+    """Load metrics.jsonl for a run as a list of dicts."""
+
+def load_latest_metrics(run_id: str, after_line: int = 0) -> list[dict]:
+    """Load only new lines from metrics.jsonl (for polling)."""
+
+def load_run_summary(run_id: str) -> str:
+    """Load summary.txt as plain text."""
+
+def load_calibration() -> dict:
+    """Load gold_set/calibration.json."""
+
+def load_spec_text() -> str:
+    """Load spec.yaml as raw text for display."""
+```
+
+### 5.5 Git History Parser (`git_history.py`)
+
+```python
+def get_train_py_log() -> list[dict]:
+    """Get git log for train.py. Returns list of:
+    {"hash": "abc1234", "message": "experiment 5: keep", "date": "...", "composite": 0.752}
+    """
+
+def get_diff(hash_a: str, hash_b: str, file: str = "train.py") -> str:
+    """Get unified diff between two commits for a file."""
+
+def get_file_at_commit(commit_hash: str, file: str = "train.py") -> str:
+    """Get file contents at a specific commit."""
+
+def get_discarded_diffs(run_id: str) -> list[dict]:
+    """Reconstruct diffs of discarded experiments from metrics.jsonl change_descriptions."""
+```
+
+### 5.6 Log Formatter (`log_formatter.py`)
+
+```python
+def format_experiment_log_entry(result: dict, prev_composite: float | None) -> str:
+    """Format a single experiment as a collapsed log line.
+    [14:23:07] Exp #3  composite=0.724 (+0.031)  KEPT  gates: ✓✓✓  $0.03
+    """
+
+def format_experiment_detail(result: dict, prev_best: dict | None) -> str:
+    """Format expanded detail view with per-axis deltas, gate reasons, explanation."""
+
+def format_log_stream(metrics: list[dict]) -> str:
+    """Format full metrics list as a log stream (newest first)."""
+```
+
+### 5.7 Charts (`charts.py`)
+
+Each function returns a `plotly.graph_objects.Figure`:
+
+```python
+# Optimization Dashboard
+def composite_trend(metrics: list[dict]) -> go.Figure:
+    """Line chart of composite score over experiments with improvement markers."""
+
+def axis_improvement_heatmap(metrics: list[dict]) -> go.Figure:
+    """Heatmap showing per-axis score changes across experiments."""
+
+def gate_pass_rate(metrics: list[dict]) -> go.Figure:
+    """Stacked bar showing gate pass/fail per experiment."""
+
+def cost_efficiency(metrics: list[dict]) -> go.Figure:
+    """Composite improvement per dollar spent."""
+
+# Axes Explorer
+def axis_trends(metrics: list[dict], axes: list[str]) -> go.Figure:
+    """Multi-line chart of selected axes over experiments."""
+
+def kappa_bars(calibration: dict) -> go.Figure:
+    """Bar chart of per-axis Kappa with threshold line."""
+
+# Run Comparison
+def run_comparison(metrics1: list[dict], metrics2: list[dict]) -> go.Figure:
+    """Grouped bar comparing best metrics of two runs."""
+
+# Cost
+def cost_burn(metrics: list[dict], budget_limit: float) -> go.Figure:
+    """Cumulative cost line with budget threshold."""
+```
+
+### 5.8 Modifications to Existing Code
+
+**`run_loop.py`** -- add optional callback parameters:
+
+```python
+def run_autoresearch(
+    max_experiments: int = 50,
+    stop_check: Callable[[], bool] | None = None,
+    pause_check: Callable[[], bool] | None = None,
+) -> None:
+    # In the main loop, after each experiment:
+    if stop_check and stop_check():
+        logger.info("Stop requested. Ending loop.")
+        break
+    while pause_check and pause_check():
+        time.sleep(1)
+```
+
+**No changes** to: `eval.py`, `schemas.py`, `config.py`, `data.py`, `observe.py`, `train.py`, `program.md`, `spec.yaml`, providers/, or any existing tests.
+
+### 5.9 Dependencies
+
+Add to `pyproject.toml`:
+
+```toml
+[project.optional-dependencies]
+dashboard = [
+    "gradio>=5.0",
+    "plotly>=5.0",
+    "pandas>=2.0",
+]
+```
+
+Dashboard is optional -- the core autoresearch loop does not require Gradio.
+
+## 6. Test Strategy
+
+### 6.1 Unit Tests (TDD -- write first)
+
+- **`tests/test_data_loader.py`** (~8 tests): `list_runs`, `load_run_metrics`, `load_latest_metrics` against fixture JSONL files in a temp directory. Empty run handling, malformed JSONL resilience, incremental load.
+- **`tests/test_log_formatter.py`** (~6 tests): Format collapsed/expanded entries. Verify delta computation, gate symbols, cost formatting.
+- **`tests/test_git_history.py`** (~5 tests): Parse git log output, generate diffs. Mock subprocess calls to git.
+- **`tests/test_charts.py`** (~8 tests): Each chart builder returns a valid `plotly.graph_objects.Figure` with expected traces. Edge cases: single experiment, empty data, missing axes.
+- **`tests/test_run_manager.py`** (~6 tests): Start/stop/pause lifecycle using a mock `run_autoresearch`. Verify status transitions, thread cleanup, stop flag propagation.
+
+### 6.2 Integration Tests
+
+- **`tests/test_dashboard_integration.py`** (~5 tests): Use Gradio's test client to verify tab rendering, button click handlers, timer updates with fixture data.
+
+### 6.3 Existing Tests
+
+All 103 existing tests must continue to pass. The `run_loop.py` signature change is backward-compatible (optional params with defaults).
+
+## 7. Risks & Mitigations
+
+| Risk | Mitigation |
+|------|-----------|
+| Thread safety: run_loop writes while dashboard reads | JSONL is append-only; dashboard reads from start each poll. File-level atomicity sufficient. |
+| Large runs (1000+ experiments) | Downsample for live charts; full data in Axes Explorer with scroll. |
+| Git subprocess in dashboard process | Use `subprocess.run` with timeout; cache results; only refresh on tab focus. |
+| Discarded diffs not in git history | Discarded experiments revert train.py. We can't show their diffs from git. Store proposed changes in metrics.jsonl (add `proposed_code` field) or use `git stash`. |
+
+## 8. Out of Scope
+
+- **Authentication/multi-user** -- local researcher tool.
+- **Database backend** -- filesystem (text files) is the source of truth.
+- **Editing train.py from the dashboard** -- the agent loop handles that.
+- **OpenTelemetry/Prometheus** -- may add later.
+- **Cloud/HF Spaces deployment** -- local only.
+- **Editing spec.yaml from the dashboard** -- read-only.
+- **Multiple concurrent runs** -- single run at a time for v1.
