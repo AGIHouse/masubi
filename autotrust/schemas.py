@@ -160,6 +160,18 @@ class StudentOutput(BaseModel):
     reason_tags: list[str]
     escalate: bool
 
+    @model_validator(mode="after")
+    def _validate_trust_vector(self) -> StudentOutput:
+        """Validate trust_vector keys against spec.yaml axis names at construction time.
+
+        Only validates when the spec singleton is already loaded (avoids
+        circular imports and allows test fixtures to construct without a spec).
+        """
+        from autotrust.config import _spec
+        if _spec is not None:
+            validate_trust_vector(self.trust_vector, _spec)
+        return self
+
 
 class CheckpointMeta(BaseModel):
     stage: str  # "dense_baseline" or "moe_search"

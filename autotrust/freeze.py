@@ -1,7 +1,7 @@
 """Teacher artifact extraction and freezing for Stage 1 -> Stage 2 handoff.
 
 Extracts the best-performing scoring prompt, labeling rules, and explanation
-schema from train.py git history and writes them to the teacher/ directory.
+schema from starting_train.py git history and writes them to the teacher/ directory.
 """
 
 from __future__ import annotations
@@ -28,7 +28,11 @@ logger = structlog.get_logger()
 
 
 def _get_train_py_log() -> list[dict]:
-    """Get train.py git log with composite scores."""
+    """Get train.py git log with composite scores.
+
+    Tracks train.py (the working copy that gets committed during runs)
+    since that is where the agent's edits are recorded in git history.
+    """
     from autotrust.dashboard.git_history import get_train_py_log
     return get_train_py_log()
 
@@ -257,6 +261,9 @@ def freeze_teacher(
     3. Extracts prompt pack, label rules, explanation schema
     4. Writes to teacher/ directory
 
+    Falls back to starting_train.py (the canonical template) when no git
+    history is available.
+
     Args:
         spec: loaded Spec
         teacher_dir: override teacher directory path
@@ -268,11 +275,18 @@ def freeze_teacher(
     if teacher_dir is None:
         teacher_dir = Path("teacher")
 
+    def _read_fallback_source() -> str:
+        """Read from starting_train.py (canonical) or train.py (working copy)."""
+        starting = Path("starting_train.py")
+        if starting.exists():
+            return starting.read_text()
+        return Path("train.py").read_text()
+
     # Find best commit
     log = _get_train_py_log()
     if not log:
-        logger.warning("No git history found for train.py, using current file")
-        source = Path("train.py").read_text()
+        logger.warning("No git history found for train.py, using starting_train.py")
+        source = _read_fallback_source()
     else:
         # Find commit with highest composite
         scored = [c for c in log if c.get("composite") is not None]
@@ -285,11 +299,11 @@ def freeze_teacher(
             )
             source = _get_file_at_commit(best["hash"])
             if not source:
-                logger.warning("Could not read train.py at commit %s, using current", best["hash"][:8])
-                source = Path("train.py").read_text()
+                logger.warning("Could not read train.py at commit %s, using starting_train.py", best["hash"][:8])
+                source = _read_fallback_source()
         else:
-            logger.warning("No scored commits found, using current train.py")
-            source = Path("train.py").read_text()
+            logger.warning("No scored commits found, using starting_train.py")
+            source = _read_fallback_source()
 
     artifacts = write_teacher_artifacts(source, spec, teacher_dir)
     logger.info("Teacher artifacts frozen", teacher_dir=str(teacher_dir))
@@ -373,22 +387,19 @@ def relabel_training_data(artifacts: TeacherArtifacts, spec: Spec) -> Path:
         )
         return output_path
 
-    # Full relabeling with scoring provider
+    # Full relabeling with scoring provider via EmailTrustScorer
     from autotrust.schemas import EmailChain
+    from starting_train import EmailTrustScorer
+
+    scorer = EmailTrustScorer(provider=scorer_provider, spec=spec)
 
     labeled_records = []
     for record in records:
         try:
             # Parse record as EmailChain if possible
             chain = EmailChain.model_validate(record)
-            # Build text from chain
-            text = "\n".join(
-                f"From: {e.from_addr}\nTo: {e.to_addr}\n"
-                f"Subject: {e.subject}\n{e.body}"
-                for e in chain.emails
-            )
-            # Score using the provider (this calls the teacher LLM)
-            scorer_output = scorer_provider.score(text, spec)
+            # Score using the frozen teacher scorer (builds prompt, calls provider, parses response)
+            scorer_output = scorer.score_chain(chain)
             labeled = dict(record)
             labeled["soft_targets"] = scorer_output.trust_vector
             labeled_records.append(labeled)
@@ -419,16 +430,21 @@ def relabel_training_data(artifacts: TeacherArtifacts, spec: Spec) -> Path:
 # ---------------------------------------------------------------------------
 
 
-if __name__ == "__main__":
+def main(argv: list[str] | None = None) -> None:
+    """CLI entry point for freezing teacher artifacts."""
     import argparse
     from autotrust.config import load_spec
 
     parser = argparse.ArgumentParser(description="Freeze teacher artifacts")
     parser.add_argument("--run-id", default=None, help="Run ID for context")
     parser.add_argument("--teacher-dir", default=None, help="Output directory for teacher artifacts")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     spec = load_spec()
     teacher_dir = Path(args.teacher_dir) if args.teacher_dir else None
     artifacts = freeze_teacher(spec, teacher_dir=teacher_dir, run_id=args.run_id)
     print(f"Teacher artifacts frozen to: {artifacts.prompt_pack_path.parent}")
+
+
+if __name__ == "__main__":
+    main()

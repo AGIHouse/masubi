@@ -120,6 +120,12 @@ class DenseStudent(nn.Module):
 def compute_trust_loss(logits: Tensor, soft_targets: Tensor) -> Tensor:
     """MSE loss between predicted trust scores and teacher soft labels.
 
+    Uses MSE rather than KL divergence (as originally specified in the TRD)
+    because trust axes are independent scores in [0, 1], not a probability
+    distribution that sums to 1. MSE is the standard regression loss for
+    independent per-axis soft label matching, while KL divergence assumes
+    a categorical distribution which does not apply here.
+
     Args:
         logits: (batch, num_axes) raw model output
         soft_targets: (batch, num_axes) teacher soft labels in [0, 1]

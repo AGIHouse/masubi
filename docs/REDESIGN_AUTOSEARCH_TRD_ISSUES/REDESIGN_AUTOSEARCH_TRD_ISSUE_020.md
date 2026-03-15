@@ -42,3 +42,6 @@ def should_escalate(self, output, spec):
 ## Affected Files
 - `autotrust/inference.py`
 - `tests/test_inference.py`
+
+## Status: Fixed
+`LocalInference` now stores `_last_student_output` from `score_text()` and `should_escalate()` delegates to the module-level function using the model's trained escalate flag. Added test `test_should_escalate_uses_model_flag`.

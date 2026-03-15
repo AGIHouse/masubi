@@ -34,3 +34,6 @@ Even though `program.md` now has a Stage 2 section (TASK_009), the agent prompt 
 ## Affected Files
 - `run_loop.py`
 - `tests/test_stage_transition.py`
+
+## Status: Fixed
+`_build_agent_prompt()` now includes a `stage` parameter. When `stage == "train"`, it includes Stage 2 context: spec.yaml architecture constraints, available APIs, and output requirements.

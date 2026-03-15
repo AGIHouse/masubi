@@ -10,6 +10,7 @@ from autotrust.schemas import (
     EmailChain,
     Explanation,
     ScorerOutput,
+    StudentOutput,
     ExperimentResult,
     GoldChain,
     CalibrationReport,
@@ -244,10 +245,13 @@ def test_checkpoint_meta_has_required_fields():
     assert meta.param_count == 50_000_000
 
 
-def test_student_output_matches_scorer_output():
+def test_student_output_matches_scorer_output(axis_names):
     """StudentOutput has trust_vector, reason_tags, escalate."""
+    trust_vector = {a: 0.0 for a in axis_names}
+    trust_vector["phish"] = 0.9
+    trust_vector["manipulation"] = 0.3
     output = StudentOutput(
-        trust_vector={"phish": 0.9, "manipulation": 0.3},
+        trust_vector=trust_vector,
         reason_tags=["phish_detected", "manipulation_possible"],
         escalate=True,
     )

@@ -42,3 +42,6 @@ Replace the standard FFN with MoE in MoE layers. This requires decomposing the `
 ## Affected Files
 - `autotrust/student.py`
 - `tests/test_moe_model.py`
+
+## Status: Fixed
+`TransformerMoELayer` now properly replaces the standard FFN with MoE FFN, implementing attention + MoE as a true replacement rather than additive.

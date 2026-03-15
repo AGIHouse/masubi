@@ -1,4 +1,4 @@
-"""Tests for train.py -- baseline EmailTrustScorer."""
+"""Tests for starting_train.py -- baseline EmailTrustScorer template."""
 
 import json
 import pytest
@@ -59,7 +59,7 @@ def mock_scorer_provider(axis_names):
 
 def test_scorer_returns_scorer_output(mock_scorer_provider, sample_chain, spec):
     """score_chain() returns ScorerOutput instance."""
-    from train import EmailTrustScorer
+    from starting_train import EmailTrustScorer
 
     scorer = EmailTrustScorer(provider=mock_scorer_provider, spec=spec)
     output = scorer.score_chain(sample_chain)
@@ -68,7 +68,7 @@ def test_scorer_returns_scorer_output(mock_scorer_provider, sample_chain, spec):
 
 def test_scorer_output_has_trust_vector(mock_scorer_provider, sample_chain, spec, axis_names):
     """Returned ScorerOutput.trust_vector has all spec axis keys."""
-    from train import EmailTrustScorer
+    from starting_train import EmailTrustScorer
 
     scorer = EmailTrustScorer(provider=mock_scorer_provider, spec=spec)
     output = scorer.score_chain(sample_chain)
@@ -77,7 +77,7 @@ def test_scorer_output_has_trust_vector(mock_scorer_provider, sample_chain, spec
 
 def test_scorer_output_has_explanation(mock_scorer_provider, sample_chain, spec):
     """Returned ScorerOutput.explanation has reasons (list) and summary (str)."""
-    from train import EmailTrustScorer
+    from starting_train import EmailTrustScorer
 
     scorer = EmailTrustScorer(provider=mock_scorer_provider, spec=spec)
     output = scorer.score_chain(sample_chain)
@@ -88,7 +88,7 @@ def test_scorer_output_has_explanation(mock_scorer_provider, sample_chain, spec)
 
 def test_scorer_batch(mock_scorer_provider, sample_chain, spec):
     """score_batch returns list of ScorerOutput with correct length."""
-    from train import EmailTrustScorer
+    from starting_train import EmailTrustScorer
 
     scorer = EmailTrustScorer(provider=mock_scorer_provider, spec=spec)
     outputs = scorer.score_batch([sample_chain, sample_chain, sample_chain])
@@ -98,7 +98,7 @@ def test_scorer_batch(mock_scorer_provider, sample_chain, spec):
 
 def test_scorer_reasons_are_strings(mock_scorer_provider, sample_chain, spec):
     """explanation.reasons contains strings."""
-    from train import EmailTrustScorer
+    from starting_train import EmailTrustScorer
 
     scorer = EmailTrustScorer(provider=mock_scorer_provider, spec=spec)
     output = scorer.score_chain(sample_chain)

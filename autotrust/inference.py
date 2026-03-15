@@ -84,6 +84,7 @@ class LocalInference:
         """
         self.model, self.config, self.meta = load_pytorch(checkpoint_path)
         self.model.eval()
+        self._last_student_output: StudentOutput | None = None
 
     def score(self, chain) -> ScorerOutput:
         """Score an email chain using the local student model.
@@ -112,7 +113,9 @@ class LocalInference:
     def should_escalate(self, output: ScorerOutput, spec: Spec) -> bool:
         """Check if the scoring result should be escalated to cloud judge.
 
-        Method version matching TRD section 4.8 API.
+        Uses the student model's trained escalation head output rather than
+        a heuristic threshold. Delegates to the module-level should_escalate()
+        using the last StudentOutput from score_text().
 
         Args:
             output: ScorerOutput from scoring
@@ -121,12 +124,9 @@ class LocalInference:
         Returns:
             True if escalation should occur.
         """
-        if spec.production is None or not spec.production.escalate_on_flag:
-            return False
-        # Check if any axis score exceeds a high threshold (escalation heuristic)
-        # since ScorerOutput doesn't carry the raw escalate flag
-        # For full pipeline, use the student output's escalate flag directly
-        return any(v >= 0.9 for v in output.trust_vector.values())
+        if self._last_student_output is not None:
+            return should_escalate(self._last_student_output, spec)
+        return False
 
     def _tokenize_simple(self, text: str) -> torch.Tensor:
         """Simple character-level tokenization for inference.
@@ -175,6 +175,7 @@ class LocalInference:
             reason_tag_names,
             threshold,
         )
+        self._last_student_output = student_output
         return student_output_to_scorer_output(student_output)
 
     def score_with_fallback(

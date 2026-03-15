@@ -92,39 +92,54 @@ def test_local_inference_no_api_dependency(checkpoint_path, spec, monkeypatch):
     assert isinstance(output, ScorerOutput)
 
 
-def test_escalation_decision_true(spec):
+@pytest.fixture
+def full_trust_vector(spec):
+    """Build a full trust vector with all axes from spec, defaulting to 0.0."""
+    return {a.name: 0.0 for a in spec.trust_axes}
+
+
+def test_escalation_decision_true(spec, full_trust_vector):
     """should_escalate returns True when escalate flag is set and spec allows it."""
     from autotrust.inference import should_escalate
 
+    trust_vector = dict(full_trust_vector)
+    trust_vector["phish"] = 0.9
+
     student_output = StudentOutput(
-        trust_vector={"phish": 0.9},
+        trust_vector=trust_vector,
         reason_tags=["phish"],
         escalate=True,
     )
     assert should_escalate(student_output, spec) is True
 
 
-def test_escalation_decision_false(spec):
+def test_escalation_decision_false(spec, full_trust_vector):
     """should_escalate returns False when escalate flag is False."""
     from autotrust.inference import should_escalate
 
+    trust_vector = dict(full_trust_vector)
+    trust_vector["phish"] = 0.1
+
     student_output = StudentOutput(
-        trust_vector={"phish": 0.1},
+        trust_vector=trust_vector,
         reason_tags=[],
         escalate=False,
     )
     assert should_escalate(student_output, spec) is False
 
 
-def test_escalation_disabled_in_spec(spec, monkeypatch):
+def test_escalation_disabled_in_spec(spec, full_trust_vector):
     """Returns False when spec.production.escalate_on_flag is False."""
     from autotrust.inference import should_escalate
 
     # Monkey-patch the production config
     spec.production.escalate_on_flag = False
 
+    trust_vector = dict(full_trust_vector)
+    trust_vector["phish"] = 0.9
+
     student_output = StudentOutput(
-        trust_vector={"phish": 0.9},
+        trust_vector=trust_vector,
         reason_tags=["phish"],
         escalate=True,
     )
@@ -227,3 +242,25 @@ def test_inference_pipeline_end_to_end(checkpoint_path, spec):
     assert isinstance(output, ScorerOutput)
     assert len(output.trust_vector) == len(axis_names)
     assert isinstance(output.explanation.summary, str)
+
+
+def test_should_escalate_uses_model_flag(checkpoint_path, spec):
+    """LocalInference.should_escalate() uses the student model's escalate head, not a heuristic."""
+    from autotrust.inference import LocalInference
+
+    inference = LocalInference(checkpoint_path)
+    axis_names = [a.name for a in spec.trust_axes]
+
+    # Score to populate _last_student_output
+    output = inference.score_text(
+        "test email",
+        axis_names=axis_names,
+        reason_tag_names=["tag1"],
+    )
+    # _last_student_output should be populated
+    assert inference._last_student_output is not None
+    # should_escalate should use the student output's escalate flag
+    result = inference.should_escalate(output, spec)
+    assert isinstance(result, bool)
+    # Result should match the stored student output's escalate flag
+    assert result == inference._last_student_output.escalate

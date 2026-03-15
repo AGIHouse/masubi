@@ -44,3 +44,6 @@ Option A is preferred to match the TRD CLI spec.
 - `autotrust/__main__.py`
 - `autotrust/freeze.py` (extract CLI logic into a `main()` function)
 - `autotrust/export.py` (extract CLI logic into a `main()` function)
+
+## Status: Fixed
+Extracted CLI logic into `main(argv)` functions in both freeze.py and export.py. Added subcommand routing in `autotrust/__main__.py` supporting `python -m autotrust freeze` and `python -m autotrust export`.

@@ -16,8 +16,8 @@ def spec():
 
 @pytest.fixture
 def sample_train_py():
-    """Sample train.py source code for extraction tests."""
-    return Path(__file__).parent.parent / "train.py"
+    """Sample starting_train.py source code for extraction tests."""
+    return Path(__file__).parent.parent / "starting_train.py"
 
 
 @pytest.fixture
@@ -26,7 +26,7 @@ def train_py_source(sample_train_py):
 
 
 def test_extract_prompt_pack(train_py_source):
-    """Given a train.py string, extracts prompt template into YAML structure."""
+    """Given a starting_train.py string, extracts prompt template into YAML structure."""
     from autotrust.freeze import extract_prompt_pack
     pack = extract_prompt_pack(train_py_source)
     assert isinstance(pack, dict)
@@ -35,7 +35,7 @@ def test_extract_prompt_pack(train_py_source):
 
 
 def test_extract_label_rules(train_py_source):
-    """Extracts threshold/escalation rules from train.py code."""
+    """Extracts threshold/escalation rules from starting_train.py code."""
     from autotrust.freeze import extract_label_rules
     rules = extract_label_rules(train_py_source)
     assert isinstance(rules, dict)
@@ -92,8 +92,8 @@ def test_freeze_from_git_history(monkeypatch, tmp_path, spec):
         {"hash": "ghi789", "message": "composite=0.60", "date": "2024-01-03", "composite": 0.60},
     ]
 
-    # Read real train.py source for extraction
-    real_source = (Path(__file__).parent.parent / "train.py").read_text()
+    # Read real starting_train.py source for extraction
+    real_source = (Path(__file__).parent.parent / "starting_train.py").read_text()
 
     import autotrust.freeze as freeze_mod
     monkeypatch.setattr(freeze_mod, "_get_train_py_log", lambda: mock_log)

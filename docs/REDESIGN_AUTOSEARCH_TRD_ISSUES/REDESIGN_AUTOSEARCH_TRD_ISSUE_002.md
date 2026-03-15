@@ -43,3 +43,6 @@ TASK_008 Implementation Step 5 lists `_archive_train_py()` and `_write_stage2_tr
 ## Affected Files
 - `run_loop.py`
 - `tests/test_stage_transition.py`
+
+## Status: Fixed
+Both `_archive_train_py()` and `_write_stage2_train_py_template()` are implemented and called from `_auto_transition()`. The canonical template is now `starting_train.py`, and `train.py` is the working copy that gets overwritten during runs.

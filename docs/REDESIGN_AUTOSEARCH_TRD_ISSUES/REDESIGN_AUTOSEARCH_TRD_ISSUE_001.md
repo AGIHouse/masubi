@@ -43,3 +43,6 @@ This means `--stage train` is functionally identical to `--stage prompt`. The en
 ## Affected Files
 - `run_loop.py`
 - `tests/test_stage_transition.py` (needs tests for Stage 2 execution)
+
+## Status: Fixed
+`_run_stage2_iteration()` is fully implemented in `run_loop.py:362-465` with subprocess execution, checkpoint discovery, and student model scoring. Stage-conditional branching exists in the main loop.

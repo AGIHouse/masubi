@@ -55,3 +55,6 @@ Also strengthen the test to verify the loss is larger for imbalanced routing.
 ## Affected Files
 - `autotrust/student.py`
 - `tests/test_moe_model.py`
+
+## Status: Fixed
+The load balance loss now uses hard top-k assignments for f_i and soft probabilities for P_i (Switch Transformer style), correctly discriminating between balanced and imbalanced routing.

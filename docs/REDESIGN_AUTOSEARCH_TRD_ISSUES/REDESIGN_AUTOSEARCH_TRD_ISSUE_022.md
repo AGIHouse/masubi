@@ -30,3 +30,9 @@ Add integration-level tests:
 
 ## Affected Files
 - `tests/test_stage_transition.py`
+
+## Status: Fixed
+Added 3 integration tests:
+- `test_stage2_iteration_full_pipeline`: Verifies agent edit -> subprocess -> checkpoint -> scoring produces results
+- `test_stage2_results_flow_through_three_gate_eval`: Verifies Stage 2 results go through composite/gold/explanation gates
+- `test_auto_transition_changes_stage_midloop`: Verifies auto-transition triggers freeze and switches stage to "train"

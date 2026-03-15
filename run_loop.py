@@ -3,6 +3,10 @@
 Drives the research loop: loads spec/calibration, starts run, iterates
 (agent prompt -> edit train.py -> score -> three-gate eval -> keep/discard),
 enforces budget/time limits, and logs everything.
+
+train.py is the ephemeral working copy that the agent edits each iteration.
+starting_train.py is the canonical template -- it is copied to train.py at
+the start of a run and is never modified by the loop itself.
 """
 
 from __future__ import annotations
@@ -271,17 +275,17 @@ def _score_with_student_model(
 
 
 def _archive_train_py() -> None:
-    """Archive Stage 1 train.py to a backup file and git tag."""
-    import shutil
-    train_path = Path("train.py")
-    if train_path.exists():
-        shutil.copy(str(train_path), "train_stage1_archive.py")
-        logger.info("Archived train.py to train_stage1_archive.py")
+    """Archive Stage 1 train.py with a git tag.
+
+    starting_train.py already holds the canonical Stage 1 template, so we
+    only need to tag the current state in git for reference.
+    """
     # Try to create git tag
     subprocess.run(
         ["git", "tag", "stage1-complete"],
         capture_output=True, text=True,
     )
+    logger.info("Tagged current state as stage1-complete")
 
 
 def _write_stage2_train_py_template() -> None:
@@ -587,6 +591,14 @@ def run_autoresearch(
     calibration = load_calibration()
     run_ctx = start_run(spec)
 
+    # Ensure train.py exists as working copy from the canonical template
+    import shutil
+    starting = Path("starting_train.py")
+    working = Path("train.py")
+    if starting.exists() and (not working.exists() or stage == "prompt"):
+        shutil.copy(str(starting), str(working))
+        logger.info("Copied starting_train.py -> train.py as working copy")
+
     logger.info("Loading eval chains...")
     eval_chains = load_eval_chains()
     logger.info("Loaded eval chains", count=len(eval_chains))
@@ -713,7 +725,7 @@ def run_autoresearch(
             logger.info("Scoring %d eval chains...", len(eval_chains))
             score_start = time.time()
             try:
-                from train import EmailTrustScorer
+                from starting_train import EmailTrustScorer
                 from autotrust.providers import get_provider
 
                 scorer_provider = get_provider("scorer", spec)

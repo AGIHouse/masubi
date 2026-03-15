@@ -31,3 +31,6 @@ TASK_012 Review Notes claim "DRY: no duplicate spec loading, no duplicate metric
 - `autotrust/student.py`
 - `autotrust/schemas.py`
 - `tests/test_moe_model.py`
+
+## Status: Fixed
+`validate_moe_config` is now imported from `autotrust.schemas` only (single source of truth). The duplicate in `student.py` has been removed.

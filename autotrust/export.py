@@ -157,7 +157,8 @@ def list_checkpoints(run_dir: Path) -> list[CheckpointMeta]:
 # ---------------------------------------------------------------------------
 
 
-if __name__ == "__main__":
+def main(argv: list[str] | None = None) -> None:
+    """CLI entry point for exporting student model checkpoints."""
     import argparse
 
     parser = argparse.ArgumentParser(description="Export student model checkpoint")
@@ -169,7 +170,7 @@ if __name__ == "__main__":
         help="Export format",
     )
     parser.add_argument("--output", default=None, help="Output path (default: auto)")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     checkpoint_path = Path(args.checkpoint)
     if args.format == "gguf":
@@ -183,3 +184,7 @@ if __name__ == "__main__":
             print(f"  Stage: {meta.stage}")
             print(f"  Composite: {meta.composite}")
             print(f"  Params: {meta.param_count:,}")
+
+
+if __name__ == "__main__":
+    main()
