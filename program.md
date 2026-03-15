@@ -1,35 +1,35 @@
 # Stage 1: Prompt Optimization
 
-You are optimizing a content-only email trust scorer.
+You are improving a prompt-based email trust scorer. The scorer calls an LLM API
+(Hyperbolic) and parses its JSON response into trust scores. You improve the
+scoring prompt, thread signal extraction, and JSON parsing in train.py.
+
+You MUST call the edit_train_py tool with the complete new train.py content.
+Do not just describe changes -- write the code.
 
 Rules:
 - Only edit train.py
-- Budget: see spec.yaml limits (currently 15 min / $8)
-- Base model: see spec.yaml providers.scorer (currently Llama-3.1-8B on Hyperbolic)
+- Keep the EmailTrustScorer class interface (score_chain, score_batch)
+- Output must be valid structured JSON: {"trust_vector": {...}, "explanation": {"reasons": [...], "summary": "..."}}
+- The reasons array must reference flagged axes (scores > 0.5)
+- Do not use regex backreferences in replacement strings
+- Handle both plain JSON and code-fenced JSON responses from the LLM
 
 Keep/discard has THREE gates (all must pass):
 1. Composite score must improve (Kappa-adjusted weights + FP penalty)
 2. Gold-set veto: no axis may degrade vs human consensus labels (all axes, including zero-weighted)
 3. Explanation gate: after first baseline, explanation quality must be >= 0.5
 
-The gold-set veto has absolute authority and uses raw human labels (not
-Kappa-adjusted). An experiment that improves composite by +10% will still be
-rejected if it degrades any single axis. Do not chase composite improvements
-that ignore per-axis quality.
+Trust axes (10 total): phish, truthfulness, verify_by_search, manipulation, deceit,
+vulnerability_risk, subtle_toxicity, polarization, classic_email_metrics, authority_impersonation.
 
-Your scorer must output structured JSON with both trust_vector and explanation:
-  {"trust_vector": {...}, "explanation": {"reasons": [...], "summary": "..."}}
-The reasons array must reference flagged axes (scores > 0.5). This is tested.
+What to improve in the prompt:
+1. Better scoring prompt -- be specific about what each axis means, give the LLM concrete examples
+2. Thread signal extraction -- detect urgency patterns, authority shifts, escalation across emails
+3. Explanation quality -- prompt the LLM to explain which axes are flagged and why
+4. JSON parsing robustness -- handle malformed responses gracefully
 
-Trust axes, weights, and thresholds are in spec.yaml.
-
-Priorities:
-1. Thread encoder: per-email embeddings -> attention over thread -> chain classifier
-2. Multi-task heads for fast axes (phish, manipulation, classic, verify_by_search)
-3. Explanation reasons: must cover all flagged axes (this is gated after baseline!)
-4. When gains stall: LoRA fine-tune via TrainingProvider (auto-terminate GPUs)
-
-Start now.
+Make a concrete change now.
 
 ---
 

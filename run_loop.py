@@ -676,8 +676,9 @@ def _call_agent(prompt: str, spec: Any) -> str | None:
 
     response = client.messages.create(
         model=spec.providers.agent.model,
-        max_tokens=4096,
+        max_tokens=16384,
         tools=tools,
+        tool_choice={"type": "tool", "name": "edit_train_py"},
         messages=[{"role": "user", "content": prompt}],
     )
 
@@ -907,7 +908,7 @@ def run_autoresearch(
                 )
 
                 experiment_cost = 0.0
-                logger.info("Calling agent (Sonnet) to propose train.py edits...")
+                logger.info("Calling agent to propose train.py edits...", model=spec.providers.agent.model)
                 update_run_status(
                     run_ctx,
                     state="running",

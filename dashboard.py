@@ -286,7 +286,7 @@ def _build_live_tab():
     log_stream = gr.Markdown(value="No experiments yet.")
 
     # Poll every 2 seconds
-    timer = gr.Timer(value=2)
+    timer = gr.Timer(value=5)
     timer.tick(
         poll_live,
         outputs=[status_box, banner, composite_plot, gate_plot, radar_plot, log_stream],
@@ -343,17 +343,8 @@ def _build_results_tab():
         outputs=[composite_plot, heatmap_plot, gate_rate_plot, cost_plot, scores_table, summary_md],
     )
 
-    # Auto-refresh results from live run too
-    results_timer = gr.Timer(value=5)
-
-    def auto_refresh(run_id):
-        return load_results(run_id)
-
-    results_timer.tick(
-        auto_refresh,
-        inputs=[run_selector],
-        outputs=[composite_plot, heatmap_plot, gate_rate_plot, cost_plot, scores_table, summary_md],
-    )
+    # No auto-refresh timer -- prevents page jumping. Users click "Load Results"
+    # or the Live tab polls independently.
 
 
 # ---------------------------------------------------------------------------
