@@ -110,6 +110,19 @@ def test_finalize_run_writes_summary(tmp_path, spec):
     assert status_data["phase"] == "done"
 
 
+def test_update_run_status_clears_stale_error(tmp_path, spec):
+    """A fresh status update should clear an older error unless a new one is supplied."""
+    from autotrust.observe import start_run, update_run_status
+
+    ctx = start_run(spec, base_dir=tmp_path)
+    update_run_status(ctx, state="running", phase="calling-agent", error="bad regex")
+    update_run_status(ctx, state="running", phase="scoring", message="Retrying cleanly.")
+
+    status_data = json.loads((ctx.run_dir / "status.json").read_text())
+    assert status_data["phase"] == "scoring"
+    assert "error" not in status_data
+
+
 def test_log_downweight_warning(tmp_path, spec, caplog):
     """When axes are downweighted, a warning is logged."""
     from autotrust.observe import start_run, log_downweight_warning

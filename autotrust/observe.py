@@ -113,6 +113,8 @@ def update_run_status(
         payload["stage"] = stage
     if error is not None:
         payload["error"] = error
+    elif any(value is not None for value in (state, phase, message, experiment_num, stage)):
+        payload.pop("error", None)
 
     status_path.write_text(json.dumps(payload, indent=2))
     return payload
