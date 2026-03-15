@@ -145,14 +145,24 @@ def _resolve_results_run(run_id: str | None = None) -> tuple[str | None, str, di
 # Live tab polling
 # ---------------------------------------------------------------------------
 
+_last_metrics_len = 0
+
+
 def poll_live():
-    """Timer callback -- returns all Live tab outputs."""
+    """Timer callback -- returns all Live tab outputs.
+
+    Uses gr.update() for charts when data hasn't changed to prevent
+    the browser from re-rendering (which causes page jumping).
+    """
+    global _last_metrics_len
+
     status = _run_manager.status
     if status == "error" and _run_manager.last_error:
         status = f"error: {_run_manager.last_error}"
 
     metrics = _refresh_poll_cache()
     banner = _status_banner(metrics)
+
     if metrics:
         log_stream = log_formatter.format_log_stream(metrics)
     else:
@@ -168,12 +178,23 @@ def poll_live():
             run_status = _load_current_run_status()
             log_stream = run_status.get("message", "No experiments yet.")
 
+    # Only re-render charts when metrics count changes (prevents page jumping)
+    if len(metrics) != _last_metrics_len:
+        _last_metrics_len = len(metrics)
+        composite = charts.composite_trend(metrics)
+        gates = charts.gate_timeline(metrics)
+        radar = charts.radar_chart(metrics[-1] if metrics else {})
+    else:
+        composite = gr.update()
+        gates = gr.update()
+        radar = gr.update()
+
     return (
         status,
         banner,
-        charts.composite_trend(metrics),
-        charts.gate_timeline(metrics),
-        charts.radar_chart(metrics[-1] if metrics else {}),
+        composite,
+        gates,
+        radar,
         log_stream,
     )
 

@@ -756,6 +756,11 @@ def run_autoresearch(
         phase="loading-data",
         stage=stage,
         message="Loading eval and gold chains.",
+        details={
+            "max_experiments": max_experiments,
+            "budget_usd": spec.limits.max_spend_usd,
+            "agent_model": spec.providers.agent.model,
+        },
     )
 
     try:
@@ -799,6 +804,14 @@ def run_autoresearch(
             phase="ready",
             stage=stage,
             message=f"Loaded {len(eval_chains)} eval chains and {len(gold_chains)} gold chains.",
+            details={
+                "eval_count": len(eval_chains),
+                "gold_count": len(gold_chains),
+                "max_experiments": max_experiments,
+                "budget_usd": spec.limits.max_spend_usd,
+                "agent_model": spec.providers.agent.model,
+                "spent_usd": total_cost,
+            },
         )
 
         for experiment_num in range(1, max_experiments + 1):
@@ -852,6 +865,13 @@ def run_autoresearch(
                 stage=stage,
                 experiment_num=experiment_num,
                 message=f"Starting experiment {experiment_num} ({stage}).",
+                details={
+                    "current_experiment": experiment_num,
+                    "max_experiments": max_experiments,
+                    "spent_usd": total_cost,
+                    "eval_count": len(eval_chains),
+                    "gold_count": len(gold_chains),
+                },
             )
 
             experiment_start = time.time()
@@ -916,6 +936,11 @@ def run_autoresearch(
                     stage=stage,
                     experiment_num=experiment_num,
                     message=f"Calling agent for experiment {experiment_num}.",
+                    details={
+                        "current_experiment": experiment_num,
+                        "agent_model": spec.providers.agent.model,
+                        "spent_usd": total_cost,
+                    },
                 )
                 try:
                     proposed_edit = _call_agent(prompt, spec)
@@ -973,6 +998,10 @@ def run_autoresearch(
                         stage=stage,
                         experiment_num=experiment_num,
                         message=f"Validating candidate train.py for experiment {experiment_num}.",
+                        details={
+                            "current_experiment": experiment_num,
+                            "candidate_path": str(candidate_path.relative_to(run_ctx.run_dir)),
+                        },
                     )
                     validation_error = _validate_stage1_candidate(Path("train.py"), spec)
                     if validation_error is not None:
@@ -1026,6 +1055,11 @@ def run_autoresearch(
                     stage=stage,
                     experiment_num=experiment_num,
                     message=f"Scoring {len(eval_chains)} eval chains for experiment {experiment_num}.",
+                    details={
+                        "current_experiment": experiment_num,
+                        "eval_count": len(eval_chains),
+                        "spent_usd": total_cost,
+                    },
                 )
                 score_start = time.time()
                 try:
@@ -1108,6 +1142,11 @@ def run_autoresearch(
                 stage=stage,
                 experiment_num=experiment_num,
                 message=f"Running gates for experiment {experiment_num}.",
+                details={
+                    "current_experiment": experiment_num,
+                    "eval_count": len(eval_chains),
+                    "gold_count": len(gold_chains),
+                },
             )
             predictions = [o.trust_vector for o in outputs]
             ground_truth = [c.labels for c in eval_chains]
@@ -1263,6 +1302,12 @@ def run_autoresearch(
                 stage=stage,
                 experiment_num=experiment_num,
                 message=f"Experiment {experiment_num} complete: {'KEPT' if keep else 'DISCARDED'} at {composite:.4f}.",
+                details={
+                    "current_experiment": experiment_num,
+                    "latest_composite": composite,
+                    "latest_decision": "KEPT" if keep else "DISCARDED",
+                    "spent_usd": total_cost,
+                },
             )
 
             logger.info(
@@ -1278,6 +1323,10 @@ def run_autoresearch(
             stage=stage,
             message="Writing run summary.",
             experiment_num=len(all_results),
+            details={
+                "current_experiment": len(all_results),
+                "spent_usd": total_cost,
+            },
         )
         finalize_run(run_ctx)
         logger.info(

@@ -94,6 +94,7 @@ def update_run_status(
     experiment_num: int | None = None,
     stage: str | None = None,
     error: str | None = None,
+    details: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Write or update the per-run status.json heartbeat."""
     status_path = _status_path(ctx)
@@ -123,6 +124,8 @@ def update_run_status(
         payload["error"] = error
     elif any(value is not None for value in (state, phase, message, experiment_num, stage)):
         payload.pop("error", None)
+    if details:
+        payload.update(details)
 
     status_path.write_text(json.dumps(payload, indent=2))
 
@@ -169,6 +172,7 @@ def start_run(spec: Spec, base_dir: Path | None = None) -> RunContext:
         state="starting",
         phase="boot",
         message="Run created. Waiting to load data.",
+        details={"started_at": ctx.start_time.isoformat()},
     )
 
     logger.info("Started run", run_id=run_id, start_time=ctx.start_time.isoformat())
