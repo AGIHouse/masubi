@@ -134,6 +134,61 @@ def test_poll_live_shows_status_message_before_first_metric():
         _poll_cache.update(old_cache)
 
 
+def test_poll_live_keeps_completed_zero_metric_run_visible():
+    """The Live tab should keep showing the last completed external run even with no metrics."""
+    from dashboard import poll_live, _run_manager, _poll_cache
+
+    old_run_id = _run_manager._current_run_id
+    old_status = _run_manager._status
+    old_external = getattr(_run_manager, "_current_run_external", False)
+    old_cache = dict(_poll_cache)
+    try:
+        _run_manager._current_run_id = "test_run"
+        _run_manager._current_run_external = True
+        _run_manager._status = "idle"
+
+        with patch.object(type(_run_manager), "_state_for_run", return_value="completed"), \
+             patch("dashboard.data_loader.load_latest_metrics", return_value=([], 0)), \
+             patch(
+                 "dashboard.data_loader.load_run_status",
+                 return_value={
+                     "state": "completed",
+                     "stage": "train",
+                     "phase": "done",
+                     "message": "Run complete with 0 experiments.",
+                     "started_at": "2026-03-15T01:37:20+00:00",
+                     "current_experiment": 4,
+                     "max_experiments": 4,
+                 },
+             ), \
+             patch(
+                 "dashboard.data_loader.load_run_status_history",
+                 return_value=[
+                     {
+                         "updated_at": "2026-03-15T01:37:20+00:00",
+                         "phase": "auto-transition",
+                         "message": "Auto-transitioning.",
+                     },
+                     {
+                         "updated_at": "2026-03-15T01:37:41+00:00",
+                         "phase": "done",
+                         "stage": "train",
+                         "message": "Run complete with 0 experiments.",
+                     },
+                 ],
+             ):
+            result = poll_live()
+            assert result[0] == "completed (external)"
+            assert "Run complete with 0 experiments." in result[1]
+            assert "Run completed without scored experiments" in result[2]
+            assert "Run complete with 0 experiments." in result[6]
+    finally:
+        _run_manager._current_run_id = old_run_id
+        _run_manager._current_run_external = old_external
+        _run_manager._status = old_status
+        _poll_cache.update(old_cache)
+
+
 def test_load_results_with_fixture_data(sample_metrics):
     """load_results returns charts and summary when data exists."""
     from dashboard import load_results
