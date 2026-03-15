@@ -211,50 +211,45 @@ Wave 6 (final -- cleanup):
 
 ## Review Summary
 
-**Review Date**: 2026-03-14 (updated)
+**Review Date**: 2026-03-14 (updated after ISSUE 015-022 fixes)
 **Reviewer**: Claude Opus 4.6 (1M context)
-**Test Suite**: 249 passed, 5 failed (see ISSUE_015)
+**Test Suite**: 258 passed, 0 failed
 
 ### Issue Counts by Severity (current state)
 
 | Severity | Count | Notes |
 |----------|-------|-------|
-| Critical | 1 | ISSUE_015 (train.py overwritten, 5 test failures) |
-| High     | 2 | ISSUE_016 (relabel API mismatch), ISSUE_022 (Stage 2 test gap) |
-| Medium   | 4 | ISSUE_017 (StudentOutput validation), ISSUE_018 (MSE vs KL), ISSUE_020 (escalate heuristic), ISSUE_021 (CLI -m flag) |
-| Low      | 1 | ISSUE_019 (6 stale issues to close) |
-| **Open** | **8 new** | Issues 015-022 |
-| **Resolved** | **6** | Issues 001, 002, 004, 005, 006, 008 (code has been updated) |
-| **Still open (prior)** | **5** | Issues 003 (partially), 007, 009, 010, 011, 012, 013, 014 |
+| Critical | 0 | ISSUE_015 fixed (starting_train.py is canonical template) |
+| High     | 0 | ISSUE_016 fixed (relabel API), ISSUE_022 fixed (Stage 2 integration tests) |
+| Medium   | 0 | ISSUE_017-021 all fixed |
+| Low      | 0 | ISSUE_019 fixed (stale issues marked) |
+| **Resolved (015-022)** | **8** | All issues 015-022 fixed |
+| **Resolved (prior)** | **6** | Issues 001, 002, 004, 005, 006, 008 |
+| **Still open (prior)** | **8** | Issues 003, 007, 009, 010, 011, 012, 013, 014 |
+
+### Structural Change: starting_train.py
+
+The canonical Stage 1 template is now `starting_train.py` (not `train.py`). `train.py` is the ephemeral working copy that the agent edits during runs and that gets overwritten at Stage 2 transition. `starting_train.py` is never modified by the loop. Tests import from `starting_train`. The old `train_stage1_archive.py` is redundant and can be removed.
 
 ### Requirements Coverage
 
 | TRD Section | Status | Notes |
 |-------------|--------|-------|
 | 4.1 spec.yaml extensions | Met | Stage2Config, ProductionConfig, per-stage limits all implemented |
-| 4.2 Teacher artifact freezing | Partially met | Freeze works; `relabel_training_data()` exists but full path has wrong API (ISSUE_016) |
-| 4.3 Student model architecture | Met | Dense and MoE models implemented with cap enforcement |
-| 4.4 train.py lifecycle | Met (with regression) | Archive + template rewrite implemented, but currently applied to working dir (ISSUE_015) |
+| 4.2 Teacher artifact freezing | Met | Freeze works; `relabel_training_data()` API fixed (ISSUE_016) |
+| 4.3 Student model architecture | Met | Dense and MoE models implemented with cap enforcement; StudentOutput validation added (ISSUE_017) |
+| 4.4 train.py lifecycle | Met | `starting_train.py` is canonical template; `train.py` is working copy (ISSUE_015) |
 | 4.5 run_loop.py changes | Met | CLI, auto-transition, Stage 2 subprocess execution all implemented |
 | 4.6 eval.py changes | Met | Eval is stage-agnostic as designed |
-| 4.7 Export pipeline | Partially met | PyTorch export works; GGUF is placeholder; CLI -m flag broken (ISSUE_021) |
-| 4.8 Production inference | Partially met | LocalInference works but escalation uses heuristic not model flag (ISSUE_020) |
+| 4.7 Export pipeline | Met | PyTorch export works; GGUF is placeholder; CLI routing works (ISSUE_021) |
+| 4.8 Production inference | Met | LocalInference uses model's escalate head (ISSUE_020) |
 | 4.9 Dashboard changes | Partially met | Charts implemented and integrated; checkpoint management UI deferred (ISSUE_009) |
 | 4.10 Documentation | Met | README, program.md, setup.sh all updated |
 
-### Critical Items
-
-1. **ISSUE_015**: `train.py` has been overwritten with the Stage 2 template in the working directory. This breaks 5 tests in `test_train.py` that import `EmailTrustScorer`. The original code is preserved in `train_stage1_archive.py`. Restoring `train.py` fixes the regression.
-
-### Previously Critical, Now Resolved
-
-- **ISSUE_001** (Stage 2 execution path): `_run_stage2_iteration()` is now fully implemented with subprocess execution, checkpoint discovery, and student model scoring.
-- **ISSUE_002** (train.py archive/rewrite): Both `_archive_train_py()` and `_write_stage2_train_py_template()` are implemented.
-
 ### Tests Passing
 
-249 of 254 tests pass. The 5 failures are all in `test_train.py` due to `train.py` being overwritten (ISSUE_015). Stage 2 helper tests pass but integration-level tests for the full Stage 2 loop are absent (ISSUE_022).
+258 of 258 tests pass. Stage 2 integration tests verify the full pipeline: agent edit -> subprocess -> checkpoint -> scoring -> three-gate evaluation (ISSUE_022).
 
 ### Recommendation
 
-**Fix then ship.** The core implementation is substantially complete -- all major modules (student models, loss functions, MoE, export, inference, freeze, run_loop Stage 2 path, dashboard charts) are working. The critical blocker is ISSUE_015 (restore `train.py` to Stage 1 content). After that fix, the remaining issues are medium/low severity: API mismatches in freeze/inference, missing CLI routing, and test coverage gaps. None block the system from functioning in Stage 1 or from transitioning to Stage 2 when triggered.
+**Ship.** All critical, high, and medium issues are resolved. The remaining open issues (003, 007, 009-014) are prior-wave items that do not block functionality.

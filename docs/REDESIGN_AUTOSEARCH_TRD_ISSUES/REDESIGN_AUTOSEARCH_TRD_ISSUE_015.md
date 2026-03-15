@@ -42,3 +42,6 @@ Option A is preferred because `train.py` should remain as the Stage 1 scorer unt
 - `train.py`
 - `train_stage1_archive.py`
 - `tests/test_train.py`
+
+## Status: Fixed
+Created `starting_train.py` as the canonical Stage 1 template. `train.py` is now the ephemeral working copy that the agent edits and that gets overwritten at Stage 2 transition. Tests import from `starting_train`. `run_loop.py` copies `starting_train.py` -> `train.py` at the start of a run. `train_stage1_archive.py` is redundant (identical to `starting_train.py`).

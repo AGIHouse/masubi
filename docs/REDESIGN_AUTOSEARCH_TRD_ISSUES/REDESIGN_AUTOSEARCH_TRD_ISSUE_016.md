@@ -35,3 +35,6 @@ Or, if `EmailTrustScorer` is unavailable after Stage 2 transition, build prompts
 
 ## Affected Files
 - `autotrust/freeze.py`
+
+## Status: Fixed
+`relabel_training_data()` now uses `EmailTrustScorer` from `starting_train` to properly construct prompts, call the single-arg `score()` API, and parse responses into `ScorerOutput` objects.

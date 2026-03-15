@@ -114,6 +114,138 @@ Do not spend this pass on:
 
 Those are important, but they are not what is currently preventing one complete run from working.
 
+## Useful For A Real 10-Minute Demo
+
+These are useful once the correctness blockers above are fixed.
+
+1. Add an eval limiter for demo runs.
+
+This is the most useful suggestion from the eval note. `run_loop.py` currently loads all rows from `eval_set/eval_chains.jsonl`, and Stage 1 scoring is sequential.
+
+Where:
+- `run_loop.py:76-87`
+- `starting_train.py:36-38`
+
+Best quick fix:
+- add `--eval-limit` to `run_loop.py`
+- slice `eval_chains = eval_chains[:eval_limit]`
+
+Recommended demo default:
+- `--eval-limit 100`
+
+Why:
+- this is the cheapest way to make one experiment finish inside a short live demo budget
+- it does not solve the correctness bugs, but it does help once those are fixed
+
+2. Parallel scoring is good, but it is not the first 10-minute fix.
+
+Yes, the current scorer is sequential, so batch or parallel provider calls would help. But that is a larger code change than simply limiting eval rows for a demo path.
+
+3. Do not rely on timeout behavior as the "solution."
+
+`per_experiment_timeout_minutes` only prevents runaway experiments. By itself it does not make the loop complete useful work inside 10 minutes.
+
+## Small Additions That Improve The Dashboard Fast
+
+These are worth adding because the dashboard already has places to show them, or they create very obvious next-step visuals.
+
+1. Log Stage 2 training metrics on every experiment.
+
+The dashboard already supports Stage 2 charts for:
+
+- `training_loss`
+- `param_count`
+- `expert_utilization`
+
+Where:
+- `dashboard.py:110-156`
+- `autotrust/dashboard/charts.py:572-676`
+
+Why:
+- this gives immediate observability for whether Stage 2 is actually learning
+- parameter-count-over-time is a very good visual for architecture search
+- expert-utilization heatmaps are the most interesting MoE visualization already supported
+
+Minimum useful payload per Stage 2 experiment:
+
+```json
+{
+  "training_loss": {
+    "trust_loss": 0.42,
+    "reason_loss": 0.19,
+    "escalate_loss": 0.11,
+    "total_loss": 0.72
+  },
+  "param_count": 17677599
+}
+```
+
+If MoE is active, also log:
+
+```json
+{
+  "expert_utilization": [0.22, 0.31, 0.19, 0.28]
+}
+```
+
+2. Log predictions for each experiment, not just aggregate metrics.
+
+`observe.py` already has `log_predictions(...)`, but the main loop is not using it.
+
+Where:
+- `autotrust/observe.py:110-119`
+
+Why:
+- makes debugging concrete instead of abstract
+- gives us the raw material for future dashboard visuals like score distributions, before/after chain comparisons, and top false positives
+- helps explain why a gate failed
+
+Minimum useful record shape:
+
+```json
+{
+  "chain_id": "eval-000123",
+  "trust_vector": {"phish": 0.91},
+  "reasons": ["phish"],
+  "kept": false
+}
+```
+
+3. Add experiment phase timings and sample counts to the logged result.
+
+Recommended fields:
+
+- `agent_duration_sec`
+- `scoring_duration_sec`
+- `gold_scoring_duration_sec`
+- `train_duration_sec`
+- `eval_count`
+- `gold_count`
+
+Why:
+- lets the dashboard explain where the 10 minutes are going
+- makes `--eval-limit` effects visible
+- gives a simple path to a later stacked-time or throughput chart
+
+4. Add gold per-axis results, not only pass/fail.
+
+Right now the dashboard can show gate failures, but not which axis on the gold set caused the veto.
+
+Recommended fields:
+
+- `gold_per_axis_scores`
+- `gold_deltas`
+- `failed_axes`
+
+Why:
+- turns the gold gate from a black box into a diagnosis tool
+- makes it obvious which axis to optimize next
+- would support a very good heatmap or veto-frequency chart later
+
+5. For performance, make explanation quality visible during Stage 2 training, not just at final gating.
+
+The repo already treats reasons as a real output head. If Stage 2 logs `reason_loss` and explanation quality together, we can tell whether better composite is coming from genuinely better structured reasoning or from gaming the score head.
+
 ## Smoke Check After Fixes
 
 Run these in order:

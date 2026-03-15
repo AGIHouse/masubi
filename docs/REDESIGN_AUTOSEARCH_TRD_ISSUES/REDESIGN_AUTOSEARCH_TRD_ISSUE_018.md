@@ -38,3 +38,6 @@ Alternatively, if MSE is intentional (e.g., because trust scores are independent
 ## Affected Files
 - `autotrust/student.py`
 - `tests/test_student_model.py` (update `test_trust_loss_soft_labels` if loss function changes)
+
+## Status: Fixed
+Documented the MSE vs KL divergence design decision in the docstring. MSE is the correct choice because trust axes are independent scores in [0,1], not a probability distribution.

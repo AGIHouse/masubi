@@ -37,3 +37,6 @@ Note: This may require updating tests that construct `StudentOutput` with partia
 ## Affected Files
 - `autotrust/schemas.py`
 - `tests/test_inference.py` (may need full trust vectors in test fixtures)
+
+## Status: Fixed
+Added `@model_validator` to `StudentOutput` mirroring `ScorerOutput` pattern. Updated test fixtures in `test_inference.py` and `test_schema_validation.py` to use full trust vectors.
