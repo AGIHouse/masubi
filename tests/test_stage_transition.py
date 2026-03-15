@@ -261,6 +261,8 @@ def test_build_agent_prompt_stage2(spec):
     )
     assert "Stage 2" in prompt
     assert "max_experts" in prompt or "student model" in prompt.lower()
+    assert "StudentConfig(hidden_size, num_layers, vocab_size, max_seq_len, num_axes, num_reason_tags)" in prompt
+    assert "Do not invent unsupported kwargs such as `axis_names`." in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -408,6 +410,50 @@ def test_stage2_iteration_reads_training_metrics(spec, tmp_path, monkeypatch, sa
         assert result["training_loss"]["total_loss"] == 0.7
         assert result["param_count"] == 123456
         assert result["expert_utilization"] == [0.2, 0.3, 0.5]
+
+
+def test_stage2_subprocess_failure_archives_candidate_and_error(spec, tmp_path, monkeypatch):
+    """Failed Stage 2 subprocess runs should preserve the candidate and full stderr."""
+    from run_loop import _run_stage2_iteration
+
+    monkeypatch.chdir(tmp_path)
+    original_train = "# original train.py\nprint('baseline')\n"
+    proposed_train = "# bad train.py\nconfig = StudentConfig(axis_names=AXIS_NAMES)\n"
+    (tmp_path / "train.py").write_text(original_train)
+
+    run_ctx = MagicMock(run_id="test-stage2", run_dir=tmp_path)
+    failed = MagicMock(
+        returncode=1,
+        stdout="2026-03-14 19:11:45,008 __main__ INFO Starting Stage 2: Student model training\n",
+        stderr=(
+            "Traceback (most recent call last):\n"
+            "  File \"/tmp/train.py\", line 10, in <module>\n"
+            "    config = StudentConfig(axis_names=AXIS_NAMES)\n"
+            "pydantic_core._pydantic_core.ValidationError: Extra inputs are not permitted\n"
+        ),
+    )
+
+    with patch("run_loop._call_agent", return_value=proposed_train), \
+         patch("run_loop.subprocess.run", return_value=failed), \
+         patch("run_loop.update_run_status"):
+        result = _run_stage2_iteration(
+            experiment_num=1,
+            spec=spec,
+            program_md="Stage 2 instructions",
+            all_results=[],
+            consecutive_no_improvement=0,
+            experiment_start=time.time(),
+            run_ctx=run_ctx,
+        )
+
+    assert result is None
+    assert (tmp_path / "train.py").read_text() == original_train
+    artifact_dir = tmp_path / "artifacts" / "exp_001"
+    assert (artifact_dir / "candidate_train.py").read_text() == proposed_train
+    error_text = (artifact_dir / "stage2_train_error.txt").read_text()
+    assert "STDOUT" in error_text
+    assert "STDERR" in error_text
+    assert "Extra inputs are not permitted" in error_text
 
 
 def test_stage2_results_flow_through_three_gate_eval(spec, tmp_path, monkeypatch, sample_chains, stage2_checkpoint):

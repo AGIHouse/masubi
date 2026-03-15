@@ -186,6 +186,27 @@ def _summarize_error(error_text: str, fallback: str = "unknown error") -> str:
     return lines[-1][:300]
 
 
+def _format_subprocess_output(
+    stdout: str | bytes | None,
+    stderr: str | bytes | None,
+    fallback: str = "train.py exited non-zero",
+) -> str:
+    """Combine subprocess stdout/stderr into a readable artifact payload."""
+    if isinstance(stdout, bytes):
+        stdout = stdout.decode(errors="replace")
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode(errors="replace")
+
+    parts = []
+    if stdout and stdout.strip():
+        parts.append(f"STDOUT\n{stdout.rstrip()}")
+    if stderr and stderr.strip():
+        parts.append(f"STDERR\n{stderr.rstrip()}")
+    if not parts:
+        return fallback
+    return "\n\n".join(parts)
+
+
 class _Stage1ValidationProvider:
     """Deterministic provider used to smoke-test agent-edited Stage 1 scorers."""
 
@@ -494,6 +515,10 @@ def _build_agent_prompt(
         prompt += "- `from autotrust.student import DenseStudent, MoEStudent`\n"
         prompt += "- `from autotrust.export import export_pytorch`\n"
         prompt += "- `from autotrust.schemas import StudentConfig, MoEConfig, CheckpointMeta`\n\n"
+        prompt += "### StudentConfig Contract\n"
+        prompt += "- `StudentConfig(hidden_size, num_layers, vocab_size, max_seq_len, num_axes, num_reason_tags)`\n"
+        prompt += "- Do not invent unsupported kwargs such as `axis_names`.\n"
+        prompt += "- Derive `num_axes` and `num_reason_tags` from `spec.trust_axes`.\n\n"
         prompt += "### Output Requirements\n"
         prompt += "train.py must save a checkpoint to `runs/<run_id>/checkpoints/best.pt`\n"
         prompt += "The checkpoint must produce: {trust_vector, reason_tags, escalate}\n"
@@ -603,6 +628,7 @@ def _run_stage2_iteration(
         Dict with 'outputs', 'predictions', 'cost' keys, or None on failure.
     """
     train_py = Path("train.py").read_text()
+    candidate_path: Path | None = None
 
     # Build stage-aware agent prompt
     prompt = _build_agent_prompt(
@@ -665,7 +691,21 @@ def _run_stage2_iteration(
 
     # Apply edit
     if proposed_edit and proposed_edit.strip() != train_py.strip():
+        if run_ctx is not None:
+            candidate_path = _write_run_artifact(
+                run_ctx,
+                experiment_num,
+                "candidate_train.py",
+                proposed_edit,
+            )
         Path("train.py").write_text(proposed_edit)
+        diff_lines = len(proposed_edit.splitlines()) - len(train_py.splitlines())
+        logger.info(
+            "Stage 2 edit applied",
+            lines_delta=f"{diff_lines:+d}",
+            new_lines=len(proposed_edit.splitlines()),
+            candidate_path=str(candidate_path) if candidate_path else None,
+        )
     else:
         logger.info("Agent proposed no change in Stage 2.")
         if run_ctx is not None:
@@ -698,7 +738,24 @@ def _run_stage2_iteration(
             timeout=timeout_seconds,
         )
         if result.returncode != 0:
-            logger.error("Stage 2 train.py failed", stderr=result.stderr[:500])
+            error_text = _format_subprocess_output(result.stdout, result.stderr)
+            error_summary = _summarize_error(error_text, fallback="train.py exited non-zero")
+            error_path = None
+            if run_ctx is not None:
+                candidate_path, error_path = _capture_candidate_failure(
+                    run_ctx,
+                    experiment_num,
+                    proposed_edit,
+                    "stage2_train",
+                    error_text,
+                )
+            logger.error(
+                "Stage 2 train.py failed",
+                experiment_num=experiment_num,
+                error=error_summary,
+                candidate_path=str(candidate_path) if candidate_path else None,
+                error_path=str(error_path) if error_path else None,
+            )
             if run_ctx is not None:
                 update_run_status(
                     run_ctx,
@@ -706,13 +763,38 @@ def _run_stage2_iteration(
                     phase="stage2-running-train",
                     stage="train",
                     experiment_num=experiment_num,
-                    message=f"Stage 2 trainer failed for experiment {experiment_num}.",
-                    error=result.stderr[:300] if result.stderr else "train.py exited non-zero",
+                    message=(
+                        f"Stage 2 trainer failed for experiment {experiment_num}."
+                        + (f" Saved artifacts in {candidate_path.parent.relative_to(run_ctx.run_dir)}." if candidate_path else "")
+                    ),
+                    error=error_summary,
                 )
             Path("train.py").write_text(train_py)  # restore
             return None
-    except subprocess.TimeoutExpired:
-        logger.warning("Stage 2 train.py timed out", timeout_sec=timeout_seconds)
+    except subprocess.TimeoutExpired as exc:
+        error_text = _format_subprocess_output(
+            exc.stdout,
+            exc.stderr,
+            fallback=f"Timed out after {timeout_seconds}s",
+        )
+        error_summary = _summarize_error(error_text, fallback=f"Timed out after {timeout_seconds}s")
+        error_path = None
+        if run_ctx is not None:
+            candidate_path, error_path = _capture_candidate_failure(
+                run_ctx,
+                experiment_num,
+                proposed_edit,
+                "stage2_train_timeout",
+                error_text,
+            )
+        logger.warning(
+            "Stage 2 train.py timed out",
+            timeout_sec=timeout_seconds,
+            experiment_num=experiment_num,
+            error=error_summary,
+            candidate_path=str(candidate_path) if candidate_path else None,
+            error_path=str(error_path) if error_path else None,
+        )
         if run_ctx is not None:
             update_run_status(
                 run_ctx,
@@ -720,13 +802,33 @@ def _run_stage2_iteration(
                 phase="stage2-running-train",
                 stage="train",
                 experiment_num=experiment_num,
-                message=f"Stage 2 trainer timed out for experiment {experiment_num}.",
-                error=f"Timed out after {timeout_seconds}s",
+                message=(
+                    f"Stage 2 trainer timed out for experiment {experiment_num}."
+                    + (f" Saved artifacts in {candidate_path.parent.relative_to(run_ctx.run_dir)}." if candidate_path else "")
+                ),
+                error=error_summary,
             )
         Path("train.py").write_text(train_py)
         return None
     except Exception as exc:
-        logger.error("Stage 2 subprocess error", error=str(exc))
+        error_text = traceback.format_exc()
+        error_summary = _summarize_error(error_text, fallback=str(exc))
+        error_path = None
+        if run_ctx is not None:
+            candidate_path, error_path = _capture_candidate_failure(
+                run_ctx,
+                experiment_num,
+                proposed_edit,
+                "stage2_train_crash",
+                error_text,
+            )
+        logger.error(
+            "Stage 2 subprocess error",
+            experiment_num=experiment_num,
+            error=error_summary,
+            candidate_path=str(candidate_path) if candidate_path else None,
+            error_path=str(error_path) if error_path else None,
+        )
         if run_ctx is not None:
             update_run_status(
                 run_ctx,
@@ -734,8 +836,11 @@ def _run_stage2_iteration(
                 phase="stage2-running-train",
                 stage="train",
                 experiment_num=experiment_num,
-                message=f"Stage 2 trainer crashed for experiment {experiment_num}.",
-                error=str(exc),
+                message=(
+                    f"Stage 2 trainer crashed for experiment {experiment_num}."
+                    + (f" Saved artifacts in {candidate_path.parent.relative_to(run_ctx.run_dir)}." if candidate_path else "")
+                ),
+                error=error_summary,
             )
         Path("train.py").write_text(train_py)
         return None
