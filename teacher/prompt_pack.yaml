@@ -1,0 +1,10 @@
+axis_guidance: {}
+prompt_template: "Analyze this email chain for trust signals across these axes: [{axes_desc}]\n\
+  \nTHREAD SIGNALS:\n{signals_text}\n\nEMAIL CHAIN:\n{thread_text}\n\nRespond with\
+  \ a JSON object containing:\n1. \"trust_vector\": a dict mapping each axis name\
+  \ to a float score from 0.0 (safe) to 1.0 (maximum concern)\n2. \"explanation\"\
+  : an object with:\n   - \"reasons\": a list of axis names or semantic references\
+  \ for axes scoring above 0.5\n   - \"summary\": a one-sentence human-readable summary\n\
+  \nRespond ONLY with valid JSON. Example format:\n{{\"trust_vector\": {{\"phish\"\
+  : 0.9, ...}}, \"explanation\": {{\"reasons\": [\"phish\", \"manipulation\"], \"\
+  summary\": \"...\"}}}}\n\nJSON:"

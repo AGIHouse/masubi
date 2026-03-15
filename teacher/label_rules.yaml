@@ -1,0 +1,9 @@
+authority_patterns: []
+content_thresholds:
+  brief_chars: 100
+  lengthy_chars: 2000
+flag_threshold: 0.5
+timing_thresholds:
+  quick_reply_seconds: 3600
+  rapid_reply_seconds: 300
+urgency_detection: false

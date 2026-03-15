@@ -1,0 +1,39 @@
+{
+  "axis_names": [
+    "phish",
+    "truthfulness",
+    "verify_by_search",
+    "manipulation",
+    "deceit",
+    "vulnerability_risk",
+    "subtle_toxicity",
+    "polarization",
+    "classic_email_metrics",
+    "authority_impersonation"
+  ],
+  "explanation_format": {
+    "reasons": "array of axis names scoring > flag_threshold",
+    "summary": "concise one-sentence summary of primary concerns"
+  },
+  "output_schema": {
+    "trust_vector": {
+      "phish": "float [0.0, 1.0]",
+      "truthfulness": "float [0.0, 1.0]",
+      "verify_by_search": "float [0.0, 1.0]",
+      "manipulation": "float [0.0, 1.0]",
+      "deceit": "float [0.0, 1.0]",
+      "vulnerability_risk": "float [0.0, 1.0]",
+      "subtle_toxicity": "float [0.0, 1.0]",
+      "polarization": "float [0.0, 1.0]",
+      "classic_email_metrics": "float [0.0, 1.0]",
+      "authority_impersonation": "float [0.0, 1.0]"
+    },
+    "explanation": {
+      "reasons": [
+        "axis_name_1",
+        "axis_name_2"
+      ],
+      "summary": "string"
+    }
+  }
+}

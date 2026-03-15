@@ -1,185 +1,226 @@
-"""Baseline EmailTrustScorer -- the ONLY file the research agent may edit.
+"""Stage 2 baseline trainer for a compact local student model.
 
-Produces structured ScorerOutput with trust_vector (dict) and Explanation
-(reasons array + summary). NOT CoT extraction -- explicit structured output.
+This file is copied into train.py when the loop transitions from Stage 1 to
+Stage 2. It provides a minimal but real dense-baseline trainer so the repo can
+run end to end before any architecture search begins.
 """
 
 from __future__ import annotations
 
 import json
-import logging
-from typing import TYPE_CHECKING
+from pathlib import Path
 
-from autotrust.schemas import Explanation, ScorerOutput
+import torch
+from torch.utils.data import DataLoader, TensorDataset
 
-if TYPE_CHECKING:
-    from autotrust.config import Spec
-    from autotrust.providers import ScoringProvider, TrainingProvider
-    from autotrust.schemas import EmailChain
+from autotrust.config import load_spec
+from autotrust.export import export_pytorch
+from autotrust.schemas import CheckpointMeta, StudentConfig
+from autotrust.student import (
+    DenseStudent,
+    check_param_budget,
+    compute_escalate_loss,
+    compute_reason_loss,
+    compute_total_loss,
+    compute_trust_loss,
+)
 
-logger = logging.getLogger(__name__)
+
+def load_training_data(synth_dir: Path = Path("synth_data")) -> list[dict]:
+    """Load labeled training records for Stage 2."""
+    data_path = synth_dir / "train_labeled.jsonl"
+    if not data_path.exists():
+        data_path = synth_dir / "train.jsonl"
+    if not data_path.exists():
+        raise FileNotFoundError("No training data found in synth_data/")
+
+    records = []
+    for line in data_path.read_text().strip().split("\n"):
+        if line.strip():
+            records.append(json.loads(line))
+    if not records:
+        raise ValueError(f"Training data at {data_path} is empty")
+    return records
 
 
-class EmailTrustScorer:
-    """Thread-aware email trust scorer with structured explanation output."""
+def _record_text(record: dict) -> str:
+    """Flatten a record into plain text for the compact student."""
+    emails = record.get("emails", [])
+    return "\n".join(
+        f"From: {email.get('from_addr', '')}\n"
+        f"To: {email.get('to_addr', '')}\n"
+        f"Subject: {email.get('subject', '')}\n"
+        f"{email.get('body', '')}"
+        for email in emails
+    )
 
-    def __init__(self, provider: ScoringProvider, spec: Spec) -> None:
-        self.provider = provider
-        self.spec = spec
 
-    def score_chain(self, chain: EmailChain) -> ScorerOutput:
-        """Score a single email chain. Returns trust vector + structured explanation."""
-        prompt = self._build_prompt(chain)
-        raw_response = self.provider.score(prompt)
-        return self._parse_response(raw_response)
+def _tokenize(text: str, vocab_size: int, max_seq_len: int) -> tuple[list[int], list[int]]:
+    """Tokenize with a small byte-level encoding and pad/truncate."""
+    tokens = [min(b, vocab_size - 1) for b in text.encode("utf-8")[:max_seq_len]]
+    if not tokens:
+        tokens = [0]
+    length = len(tokens)
+    if length < max_seq_len:
+        pad = [0] * (max_seq_len - length)
+        tokens = tokens + pad
+    attention = [1] * min(length, max_seq_len) + [0] * max(0, max_seq_len - length)
+    return tokens[:max_seq_len], attention[:max_seq_len]
 
-    def score_batch(self, chains: list[EmailChain]) -> list[ScorerOutput]:
-        """Score multiple chains (sequential)."""
-        return [self.score_chain(c) for c in chains]
 
-    def _build_prompt(self, chain: EmailChain) -> str:
-        """Build a thread-aware scoring prompt.
+def _soft_targets(record: dict, axis_names: list[str]) -> dict[str, float]:
+    """Extract soft targets with a safe fallback order."""
+    source = (
+        record.get("soft_targets")
+        or record.get("trust_vector")
+        or record.get("labels")
+        or {}
+    )
+    return {axis: float(source.get(axis, 0.0)) for axis in axis_names}
 
-        Includes thread encoder signals:
-        - Reply timing analysis
-        - Escalation detection
-        - Authority shifts
-        - Persuasion progression
-        """
-        # Build chain text with thread context
-        thread_parts = []
-        for i, email in enumerate(chain.emails):
-            thread_parts.append(
-                f"--- Email {i + 1} (depth={email.reply_depth}) ---\n"
-                f"From: {email.from_addr}\n"
-                f"To: {email.to_addr}\n"
-                f"Subject: {email.subject}\n"
-                f"Time: {email.timestamp}\n\n"
-                f"{email.body}"
-            )
 
-        thread_text = "\n\n".join(thread_parts)
+def build_dataset(
+    records: list[dict],
+    axis_names: list[str],
+    subtle_axes: list[str],
+    flag_threshold: float,
+    escalate_threshold: float,
+    *,
+    vocab_size: int,
+    max_seq_len: int,
+) -> TensorDataset:
+    """Convert JSONL records into tensors for the dense baseline."""
+    input_ids = []
+    attention_masks = []
+    trust_targets = []
+    reason_targets = []
+    escalate_targets = []
 
-        # Thread encoder signals
-        signals = self._extract_thread_signals(chain)
-        signals_text = "\n".join(f"- {s}" for s in signals) if signals else "None detected"
+    for record in records:
+        text = _record_text(record)
+        ids, attention = _tokenize(text, vocab_size=vocab_size, max_seq_len=max_seq_len)
+        soft = _soft_targets(record, axis_names)
+        reason = [1.0 if soft[axis] > flag_threshold else 0.0 for axis in axis_names]
+        escalate = 1.0 if any(soft.get(axis, 0.0) >= escalate_threshold for axis in subtle_axes) else 0.0
 
-        # Build axis list
-        axes_desc = ", ".join(
-            f'"{a.name}" ({a.type}, weight={a.weight})'
-            for a in self.spec.trust_axes
-        )
+        input_ids.append(ids)
+        attention_masks.append(attention)
+        trust_targets.append([soft[axis] for axis in axis_names])
+        reason_targets.append(reason)
+        escalate_targets.append([escalate])
 
-        prompt = f"""Analyze this email chain for trust signals across these axes: [{axes_desc}]
+    return TensorDataset(
+        torch.tensor(input_ids, dtype=torch.long),
+        torch.tensor(attention_masks, dtype=torch.long),
+        torch.tensor(trust_targets, dtype=torch.float32),
+        torch.tensor(reason_targets, dtype=torch.float32),
+        torch.tensor(escalate_targets, dtype=torch.float32),
+    )
 
-THREAD SIGNALS:
-{signals_text}
 
-EMAIL CHAIN:
-{thread_text}
+def collect_expert_utilization(model) -> list[float] | None:
+    """Collect averaged expert utilization from a trained MoE model."""
+    layers = getattr(model, "layers", None)
+    if layers is None:
+        return None
 
-Respond with a JSON object containing:
-1. "trust_vector": a dict mapping each axis name to a float score from 0.0 (safe) to 1.0 (maximum concern)
-2. "explanation": an object with:
-   - "reasons": a list of axis names or semantic references for axes scoring above 0.5
-   - "summary": a one-sentence human-readable summary
+    vectors = []
+    for layer in layers:
+        moe_block = getattr(layer, "moe_block", None)
+        util = getattr(moe_block, "last_expert_utilization", None) if moe_block is not None else None
+        if util is not None:
+            vectors.append(util.detach().cpu())
 
-Respond ONLY with valid JSON. Example format:
-{{"trust_vector": {{"phish": 0.9, ...}}, "explanation": {{"reasons": ["phish", "manipulation"], "summary": "..."}}}}
+    if not vectors:
+        return None
 
-JSON:"""
-        return prompt
+    mean_util = torch.stack(vectors).mean(dim=0)
+    return [round(float(v), 6) for v in mean_util]
 
-    def _extract_thread_signals(self, chain: EmailChain) -> list[str]:
-        """Extract thread-aware signals from the email chain."""
-        signals = []
 
-        if len(chain.emails) > 1:
-            # Reply timing
-            for i in range(1, len(chain.emails)):
-                prev_time = chain.emails[i - 1].timestamp
-                curr_time = chain.emails[i].timestamp
-                delta = (curr_time - prev_time).total_seconds()
-                if delta < 300:  # < 5 minutes
-                    signals.append(f"Rapid reply at email {i + 1} ({delta:.0f}s)")
+def train() -> Path:
+    """Train a compact dense baseline and emit checkpoint + training metrics."""
+    torch.manual_seed(0)
 
-            # Escalation detection
-            depths = [e.reply_depth for e in chain.emails]
-            if len(set(depths)) > 1:
-                signals.append(f"Thread depth escalation: {depths}")
+    spec = load_spec()
+    axis_names = [axis.name for axis in spec.trust_axes]
+    records = load_training_data()
 
-            # Authority shifts
-            senders = [e.from_addr for e in chain.emails]
-            if len(set(senders)) > 1:
-                signals.append(f"Sender changes in thread: {senders}")
+    config = StudentConfig(
+        hidden_size=64,
+        num_layers=2,
+        vocab_size=256,
+        max_seq_len=256,
+        num_axes=len(axis_names),
+        num_reason_tags=len(axis_names),
+    )
+    model = DenseStudent.from_config(config)
+    check_param_budget(model, spec)
 
-        # Urgency keywords
-        all_text = " ".join(e.subject + " " + e.body for e in chain.emails).lower()
-        urgency_words = ["urgent", "immediately", "asap", "right now", "deadline"]
-        found_urgency = [w for w in urgency_words if w in all_text]
-        if found_urgency:
-            signals.append(f"Urgency signals: {found_urgency}")
+    dataset = build_dataset(
+        records[:128],
+        axis_names,
+        spec.axis_groups.subtle,
+        spec.explanation.flag_threshold,
+        spec.judge.escalate_threshold,
+        vocab_size=config.vocab_size,
+        max_seq_len=config.max_seq_len,
+    )
+    batch_size = min(16, len(dataset)) or 1
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
 
-        # Authority claims
-        authority_words = ["ceo", "cfo", "director", "manager", "admin", "it department"]
-        found_authority = [w for w in authority_words if w in all_text]
-        if found_authority:
-            signals.append(f"Authority claims: {found_authority}")
+    model.train()
+    final_losses = {
+        "trust_loss": 0.0,
+        "reason_loss": 0.0,
+        "escalate_loss": 0.0,
+        "total_loss": 0.0,
+    }
+    for _epoch in range(2):
+        for batch in loader:
+            input_ids, attention_mask, trust_targets, reason_targets, escalate_targets = batch
+            output = model(input_ids, attention_mask=attention_mask)
 
-        return signals
+            trust_loss = compute_trust_loss(output["trust_logits"], trust_targets)
+            reason_loss = compute_reason_loss(output["reason_logits"], reason_targets)
+            escalate_loss = compute_escalate_loss(output["escalate_logit"], escalate_targets)
+            total_loss = compute_total_loss(trust_loss, reason_loss, escalate_loss)
 
-    def _parse_response(self, raw: str) -> ScorerOutput:
-        """Parse LLM response into ScorerOutput."""
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            # Try to extract JSON from response
-            import re
-            match = re.search(r"\{.*\}", raw, re.DOTALL)
-            if match:
-                data = json.loads(match.group())
-            else:
-                logger.error("Failed to parse response as JSON: %s", raw[:200])
-                # Return default scores
-                return self._default_output()
+            optimizer.zero_grad()
+            total_loss.backward()
+            optimizer.step()
 
-        trust_vector = data.get("trust_vector", {})
-        explanation_data = data.get("explanation", {})
+            final_losses = {
+                "trust_loss": round(float(trust_loss.item()), 6),
+                "reason_loss": round(float(reason_loss.item()), 6),
+                "escalate_loss": round(float(escalate_loss.item()), 6),
+                "total_loss": round(float(total_loss.item()), 6),
+            }
 
-        # Ensure all axes are present
-        for axis in self.spec.trust_axes:
-            if axis.name not in trust_vector:
-                trust_vector[axis.name] = 0.0
+    checkpoint_dir = Path("runs/latest/checkpoints")
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_path = checkpoint_dir / "best.pt"
+    meta = CheckpointMeta(
+        stage="dense_baseline",
+        experiment_num=0,
+        composite=0.0,
+        path=checkpoint_path,
+        param_count=model.param_count(),
+    )
+    export_pytorch(model, config, meta, checkpoint_path)
 
-        # Clamp values to [0, 1]
-        trust_vector = {
-            k: max(0.0, min(1.0, float(v)))
-            for k, v in trust_vector.items()
-            if k in {a.name for a in self.spec.trust_axes}
-        }
+    metrics = {
+        "training_loss": final_losses,
+        "param_count": model.param_count(),
+    }
+    expert_utilization = collect_expert_utilization(model)
+    if expert_utilization is not None:
+        metrics["expert_utilization"] = expert_utilization
+    (checkpoint_dir / "training_metrics.json").write_text(json.dumps(metrics, indent=2))
+    print(json.dumps(metrics))
+    return checkpoint_path
 
-        explanation = Explanation(
-            reasons=explanation_data.get("reasons", []),
-            summary=explanation_data.get("summary", "No summary provided."),
-        )
 
-        return ScorerOutput(trust_vector=trust_vector, explanation=explanation)
-
-    def _default_output(self) -> ScorerOutput:
-        """Return default output when parsing fails."""
-        return ScorerOutput(
-            trust_vector={a.name: 0.0 for a in self.spec.trust_axes},
-            explanation=Explanation(reasons=[], summary="Failed to parse response."),
-        )
-
-    # ---------------------------------------------------------------------------
-    # LoRA scaffolding (placeholders)
-    # ---------------------------------------------------------------------------
-
-    def fine_tune(self, data_path: str, trainer: TrainingProvider) -> str:
-        """Placeholder: LoRA fine-tune via TrainingProvider. Returns checkpoint path."""
-        raise NotImplementedError("LoRA fine-tuning not yet implemented")
-
-    def load_fine_tuned(self, checkpoint: str) -> None:
-        """Placeholder: Load LoRA checkpoint."""
-        raise NotImplementedError("LoRA loading not yet implemented")
+if __name__ == "__main__":
+    train()
