@@ -82,10 +82,13 @@ class RunManager:
     @property
     def status(self) -> str:
         if self._status == "idle" and self._current_run_id is None:
-            # Check if there's an externally-started active run
             ext_run = self._detect_active_run()
             if ext_run is not None:
-                return "running (external)"
+                run_dir = Path("runs") / ext_run
+                has_metrics = (run_dir / "metrics.jsonl").exists()
+                if has_metrics:
+                    return "running (external)"
+                return "starting (external)"
         return self._status
 
     @property
@@ -116,28 +119,35 @@ class RunManager:
 
     @staticmethod
     def _detect_active_run(base_dir: Path = Path("runs")) -> str | None:
-        """Find the most recent run that has metrics.jsonl but no summary.txt.
+        """Find the most recent in-progress or completed run.
 
-        This detects runs started externally (e.g. via CLI) that are still in
-        progress. Also returns runs that have completed recently (have summary.txt)
-        if no active run exists, so the dashboard can display finished CLI runs.
+        Detection priority:
+        1. Has config.json but no summary.txt (starting -- first experiment not done yet)
+        2. Has metrics.jsonl but no summary.txt (actively running)
+        3. Has metrics.jsonl and summary.txt (completed)
         """
         if not base_dir.exists():
             return None
 
+        starting = []
         active = []
         completed = []
         for entry in base_dir.iterdir():
-            if not entry.is_dir():
+            if not entry.is_dir() or entry.name == "latest":
                 continue
+            has_config = (entry / "config.json").exists()
             has_metrics = (entry / "metrics.jsonl").exists()
             has_summary = (entry / "summary.txt").exists()
-            if has_metrics and not has_summary:
+            if has_config and not has_metrics and not has_summary:
+                starting.append(entry.name)
+            elif has_metrics and not has_summary:
                 active.append(entry.name)
             elif has_metrics and has_summary:
                 completed.append(entry.name)
 
-        # Prefer active (in-progress) runs; fall back to most recent completed
+        # Prefer starting > active > completed (most recent in each tier)
+        if starting:
+            return sorted(starting)[-1]
         if active:
             return sorted(active)[-1]
         if completed:

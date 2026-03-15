@@ -53,7 +53,12 @@ def _refresh_poll_cache() -> list[dict]:
 def _status_banner(metrics: list[dict]) -> str:
     """One-line status summary shown at top of Live tab."""
     if not metrics:
-        return "Waiting for first experiment..."
+        status = _run_manager.status
+        if "starting" in status:
+            return "Run detected -- waiting for first experiment to complete..."
+        if "running" in status:
+            return "Run in progress -- waiting for first result..."
+        return "Waiting for first experiment... (start a run with `uv run python run_loop.py`)"
 
     n = len(metrics)
     kept = sum(1 for m in metrics if _is_kept(m))

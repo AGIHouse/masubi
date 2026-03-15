@@ -101,16 +101,20 @@ uv run python -m autotrust.data build-train --count 5000
 ### Stage 1: Prompt Optimization
 
 ```bash
+# Run 5 experiments, score 100 eval chains each (dashboard opens automatically)
+uv run python run_loop.py --max-experiments 5 --eval-limit 100
+
+# Full eval set (slower, ~20 min per experiment)
 uv run python run_loop.py
 ```
 
-The agent iterates on `train.py` prompts. After 3 consecutive no-improvement experiments, the system auto-transitions to Stage 2.
+The dashboard opens in your browser automatically. The agent iterates on `train.py` prompts. After 3 consecutive no-improvement experiments, the system auto-transitions to Stage 2.
 
 ### Stage 2: Model Training (after Stage 1 completes)
 
 ```bash
 # Auto-transition happens automatically, or start directly:
-uv run python run_loop.py --stage train
+uv run python run_loop.py --stage train --max-experiments 5
 ```
 
 Stage 2 freezes teacher artifacts from the best Stage 1 result, then trains a compact student model (50-200M params). Architecture search follows: dense baseline first, then MoE if gains stall. See `spec.yaml` for caps (max_experts, max_params_m, max_top_k).
@@ -127,10 +131,13 @@ uv run python -m autotrust.export --checkpoint runs/<run_id>/best.pt --format gg
 
 ### Monitor
 
+The dashboard launches automatically with `run_loop.py`. To run it standalone:
+
 ```bash
-# Dashboard (separate terminal)
 uv run python dashboard.py
 ```
+
+To skip the auto-launch: `--no-dashboard`.
 
 ### API Keys Required
 

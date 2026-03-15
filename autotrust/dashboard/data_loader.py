@@ -9,6 +9,18 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def load_run_status(run_id: str, base_dir: Path = Path("runs")) -> dict:
+    """Load status.json for a run. Returns empty dict if missing or invalid."""
+    status_path = base_dir / run_id / "status.json"
+    if not status_path.exists():
+        return {}
+    try:
+        return json.loads(status_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        logger.warning("Failed to parse status at %s", status_path)
+        return {}
+
+
 def list_runs(base_dir: Path = Path("runs")) -> list[dict]:
     """List all runs with metadata from summary.txt and metrics.jsonl.
 
@@ -32,10 +44,12 @@ def list_runs(base_dir: Path = Path("runs")) -> list[dict]:
             "best_composite": 0.0,
             "total_cost": 0.0,
             "status": "unknown",
+            "status_message": "",
         }
 
         # Count experiments from metrics.jsonl
         metrics_path = entry / "metrics.jsonl"
+        status = load_run_status(run_id, base_dir=base_dir)
         if metrics_path.exists():
             lines = [ln for ln in metrics_path.read_text().strip().split("\n") if ln.strip()]
             info["experiment_count"] = len(lines)
@@ -57,16 +71,23 @@ def list_runs(base_dir: Path = Path("runs")) -> list[dict]:
 
         # Parse summary.txt for date and status
         summary_path = entry / "summary.txt"
+        config_path = entry / "config.json"
         if summary_path.exists():
             for line in summary_path.read_text().strip().split("\n"):
                 if line.startswith("Start time:"):
                     info["date"] = line.split(":", 1)[1].strip()
                 elif line.startswith("Run ID:"):
                     pass  # already have it
-            info["status"] = "completed"  # has summary = finalized
+            info["status"] = "completed"
+        elif status.get("state"):
+            info["status"] = status["state"]
         elif metrics_path.exists():
-            # metrics.jsonl exists but no summary.txt = still running
             info["status"] = "running"
+        elif config_path.exists():
+            info["status"] = "starting"
+
+        if status.get("message"):
+            info["status_message"] = status["message"]
 
         runs.append(info)
 

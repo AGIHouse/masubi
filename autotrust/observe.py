@@ -6,6 +6,7 @@ Uses structlog for JSON output. Manages per-run directories under runs/<run_id>/
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -21,6 +22,10 @@ if TYPE_CHECKING:
 
 def configure_structlog() -> None:
     """Configure structlog with JSON output, ISO timestamps, and log level."""
+    root_logger = logging.getLogger()
+    if not root_logger.handlers:
+        logging.basicConfig(level=logging.INFO, format="%(message)s")
+
     structlog.configure(
         processors=[
             structlog.stdlib.add_log_level,
@@ -55,6 +60,52 @@ class RunContext:
     experiments: list[dict[str, Any]] = field(default_factory=list)
 
 
+def _status_path(ctx: RunContext) -> Path:
+    """Return the status.json path for a run."""
+    return ctx.run_dir / "status.json"
+
+
+def update_run_status(
+    ctx: RunContext,
+    *,
+    state: str | None = None,
+    phase: str | None = None,
+    message: str | None = None,
+    experiment_num: int | None = None,
+    stage: str | None = None,
+    error: str | None = None,
+) -> dict[str, Any]:
+    """Write or update the per-run status.json heartbeat."""
+    status_path = _status_path(ctx)
+
+    if status_path.exists():
+        try:
+            payload = json.loads(status_path.read_text())
+        except json.JSONDecodeError:
+            payload = {}
+    else:
+        payload = {}
+
+    payload["run_id"] = ctx.run_id
+    payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    if state is not None:
+        payload["state"] = state
+    if phase is not None:
+        payload["phase"] = phase
+    if message is not None:
+        payload["message"] = message
+    if experiment_num is not None:
+        payload["experiment_num"] = experiment_num
+    if stage is not None:
+        payload["stage"] = stage
+    if error is not None:
+        payload["error"] = error
+
+    status_path.write_text(json.dumps(payload, indent=2))
+    return payload
+
+
 # ---------------------------------------------------------------------------
 # Run lifecycle
 # ---------------------------------------------------------------------------
@@ -86,6 +137,13 @@ def start_run(spec: Spec, base_dir: Path | None = None) -> RunContext:
         start_time=datetime.now(timezone.utc),
     )
 
+    update_run_status(
+        ctx,
+        state="starting",
+        phase="boot",
+        message="Run created. Waiting to load data.",
+    )
+
     logger.info("Started run %s at %s", run_id, ctx.start_time.isoformat())
     return ctx
 
@@ -98,6 +156,14 @@ def log_experiment(ctx: RunContext, result: ExperimentResult) -> None:
     metrics_path = ctx.run_dir / "metrics.jsonl"
     with open(metrics_path, "a") as f:
         f.write(json.dumps(result_dict, default=str) + "\n")
+
+    update_run_status(
+        ctx,
+        state="running",
+        phase="logged-experiment",
+        message=f"Logged experiment {len(ctx.experiments)}.",
+        experiment_num=len(ctx.experiments),
+    )
 
     logger.info(
         "Experiment %s: composite=%.4f, gates=%s",
@@ -138,6 +204,14 @@ def finalize_run(ctx: RunContext) -> RunArtifacts:
         summary_lines.append(f"Total cost: ${total_cost:.2f}")
 
     summary_path.write_text("\n".join(summary_lines))
+
+    update_run_status(
+        ctx,
+        state="completed",
+        phase="done",
+        message=f"Run complete with {len(ctx.experiments)} experiments.",
+        experiment_num=len(ctx.experiments),
+    )
 
     artifacts = RunArtifacts(
         metrics_json=ctx.run_dir / "metrics.jsonl",
