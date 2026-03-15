@@ -43,6 +43,19 @@ def test_external_starting_run_is_detected(tmp_path):
     assert state == "starting"
 
 
+def test_completed_summary_only_run_is_detected(tmp_path):
+    """Completed runs without metrics should still be discoverable after smoke tests."""
+    from autotrust.dashboard.run_manager import RunManager
+
+    run_dir = tmp_path / "20260315_010000_abcd1234"
+    run_dir.mkdir()
+    (run_dir / "summary.txt").write_text("Run ID: 20260315_010000_abcd1234\nExperiments: 0\n")
+
+    run_id, state = RunManager._detect_active_run_with_state(base_dir=tmp_path)
+    assert run_id == run_dir.name
+    assert state == "completed"
+
+
 def test_start_sets_running():
     """After start(), status is 'running' and current_run_id may be detected."""
     from autotrust.dashboard.run_manager import RunManager

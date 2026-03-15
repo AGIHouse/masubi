@@ -6,6 +6,7 @@ Tab 2: Results   -- see how performance improved over time
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 import gradio as gr
@@ -54,6 +55,24 @@ def _load_current_run_status() -> dict:
     return data_loader.load_run_status(run_id)
 
 
+def _format_currency(value: object) -> str:
+    """Format dashboard currency fields defensively."""
+    try:
+        return f"${float(value):.2f}"
+    except (TypeError, ValueError):
+        return "$0.00"
+
+
+def _format_started_at(value: str) -> str:
+    """Format ISO timestamps into a friendlier local-looking string."""
+    if not value:
+        return "unknown"
+    try:
+        return datetime.fromisoformat(value).strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return value
+
+
 # ---------------------------------------------------------------------------
 # Status banner
 # ---------------------------------------------------------------------------
@@ -87,6 +106,64 @@ def _status_banner(metrics: list[dict]) -> str:
         f"Cost: **${cost:.2f}** / ${_budget_limit:.2f}"
         f"{stage2_suffix}"
     )
+
+
+def _run_snapshot(status: dict, metrics: list[dict]) -> str:
+    """Compact run card shown even before charts have data."""
+    if not status and not metrics and not _run_manager.current_run_id:
+        return "### Run Snapshot\nWaiting for a run."
+
+    lines = ["### Run Snapshot"]
+    run_id = _run_manager.current_run_id
+    if run_id:
+        lines.append(f"**Run ID:** `{run_id}`")
+
+    stage = status.get("stage")
+    phase = status.get("phase")
+    if stage or phase:
+        lines.append(f"**Stage / Phase:** `{stage or 'unknown'}` / `{phase or 'unknown'}`")
+
+    current_exp = status.get("current_experiment", status.get("experiment_num"))
+    max_exp = status.get("max_experiments")
+    if current_exp is not None or max_exp is not None:
+        if max_exp is not None:
+            lines.append(f"**Experiment:** {current_exp or 0} / {max_exp}")
+        else:
+            lines.append(f"**Experiment:** {current_exp}")
+
+    eval_count = status.get("eval_count")
+    gold_count = status.get("gold_count")
+    if eval_count is not None or gold_count is not None:
+        lines.append(f"**Eval / Gold:** {eval_count or 0} / {gold_count or 0}")
+
+    if status.get("spent_usd") is not None:
+        lines.append(f"**Spend:** {_format_currency(status.get('spent_usd'))}")
+
+    if status.get("agent_model"):
+        lines.append(f"**Agent:** `{status['agent_model']}`")
+
+    if status.get("started_at"):
+        lines.append(f"**Started:** {_format_started_at(status['started_at'])}")
+
+    latest = metrics[-1] if metrics else {}
+    latest_decision = status.get("latest_decision")
+    latest_composite = status.get("latest_composite")
+    if latest:
+        latest_decision = latest_decision or ("KEPT" if _is_kept(latest) else "DISCARDED")
+        latest_composite = latest_composite if latest_composite is not None else latest.get("composite")
+
+    if latest_decision:
+        lines.append(f"**Latest decision:** {latest_decision}")
+    if latest_composite is not None:
+        lines.append(f"**Latest composite:** {float(latest_composite):.4f}")
+
+    if status.get("message"):
+        lines.extend(["", f"**Message:** {status['message']}"])
+
+    if not metrics:
+        lines.extend(["", "_No scored experiments yet. Charts populate after `metrics.jsonl` entries are written._"])
+
+    return "\n".join(lines)
 
 
 def _stage2_snapshot(result: dict) -> str:
@@ -161,7 +238,9 @@ def poll_live():
         status = f"error: {_run_manager.last_error}"
 
     metrics = _refresh_poll_cache()
+    run_status = _load_current_run_status()
     banner = _status_banner(metrics)
+    snapshot = _run_snapshot(run_status, metrics)
 
     if metrics:
         log_stream = log_formatter.format_log_stream(metrics)
@@ -172,10 +251,8 @@ def poll_live():
             if history:
                 log_stream = log_formatter.format_status_history(history)
             else:
-                run_status = _load_current_run_status()
                 log_stream = run_status.get("message", "No experiments yet.")
         else:
-            run_status = _load_current_run_status()
             log_stream = run_status.get("message", "No experiments yet.")
 
     # Only re-render charts when metrics count changes (prevents page jumping)
@@ -192,6 +269,7 @@ def poll_live():
     return (
         status,
         banner,
+        snapshot,
         composite,
         gates,
         radar,
@@ -218,14 +296,61 @@ def load_results(run_id: str | None = None):
     if not metrics:
         empty = charts._empty_figure("No experiment data")
         status_message = run_info.get("status_message", "") if run_info else ""
-        extra = f"\n\n**Message:** {status_message}" if status_message else ""
+        run_status = data_loader.load_run_status(run_id)
+        history = data_loader.load_run_status_history(run_id, limit=10)
+        summary_text = data_loader.load_run_summary(run_id).strip()
+
+        details = [f"### Run: {run_id}", f"**Viewing:** {view_label}"]
+        if run_info is not None:
+            details.append(f"**Status:** {run_info.get('status', 'unknown')}")
+        if run_status.get("stage") or run_status.get("phase"):
+            details.append(
+                f"**Stage / Phase:** `{run_status.get('stage', 'unknown')}` / `{run_status.get('phase', 'unknown')}`"
+            )
+        if status_message:
+            details.append(f"**Message:** {status_message}")
+        if run_status.get("current_experiment") or run_status.get("experiment_num"):
+            current_exp = run_status.get("current_experiment", run_status.get("experiment_num"))
+            max_exp = run_status.get("max_experiments")
+            if max_exp is not None:
+                details.append(f"**Experiment:** {current_exp} / {max_exp}")
+            else:
+                details.append(f"**Experiment:** {current_exp}")
+        if run_status.get("eval_count") is not None or run_status.get("gold_count") is not None:
+            details.append(
+                f"**Eval / Gold:** {run_status.get('eval_count', 0)} / {run_status.get('gold_count', 0)}"
+            )
+        if run_status.get("spent_usd") is not None:
+            details.append(f"**Spend:** {_format_currency(run_status.get('spent_usd'))}")
+        details.extend(["", "No experiment metrics were written for this run."])
+
+        if history:
+            details.extend(
+                [
+                    "",
+                    "#### Recent Timeline",
+                    "```text",
+                    log_formatter.format_status_history(history),
+                    "```",
+                ]
+            )
+        if summary_text:
+            details.extend(
+                [
+                    "",
+                    "#### Summary File",
+                    "```text",
+                    summary_text,
+                    "```",
+                ]
+            )
         return (
             empty,
             empty,
             empty,
             empty,
             [],
-            f"### Run: {run_id}\n**Viewing:** {view_label}{extra}\n\nNo experiment data yet.",
+            "\n".join(details),
         )
 
     return (
@@ -292,6 +417,7 @@ def _build_live_tab():
 
     # Status banner
     banner = gr.Markdown(value="Waiting for first experiment... (start a run with `uv run python run_loop.py`)")
+    snapshot = gr.Markdown(value="### Run Snapshot\nWaiting for a run.")
 
     # Hero chart: composite trend
     composite_plot = gr.Plot(label="Composite Score Over Time")
@@ -310,42 +436,46 @@ def _build_live_tab():
     timer = gr.Timer(value=5)
     timer.tick(
         poll_live,
-        outputs=[status_box, banner, composite_plot, gate_plot, radar_plot, log_stream],
+        outputs=[status_box, banner, snapshot, composite_plot, gate_plot, radar_plot, log_stream],
     )
 
 
 def _build_results_tab():
     """Tab 2: See how performance improved."""
+    initial_run_id, _view_label, _run_info = _resolve_results_run()
+    initial_results = load_results(initial_run_id)
+
     with gr.Row():
         run_selector = gr.Dropdown(
             label="Select Run",
             choices=_run_selector_choices(),
-            value=None,
+            value=initial_run_id,
             info="Leave blank to follow the live or latest run.",
         )
         refresh_btn = gr.Button("Load Results", variant="primary")
 
     # Summary
-    summary_md = gr.Markdown(value="Select a run and click Load Results.")
+    summary_md = gr.Markdown(value=initial_results[5])
 
     # Hero chart: enhanced composite trend with annotations
-    composite_plot = gr.Plot(label="Autoresearch Progress")
+    composite_plot = gr.Plot(label="Autoresearch Progress", value=initial_results[0])
 
     # Analysis row
     with gr.Row():
         with gr.Column():
-            heatmap_plot = gr.Plot(label="Per-Axis Improvement Over Time")
+            heatmap_plot = gr.Plot(label="Per-Axis Improvement Over Time", value=initial_results[1])
         with gr.Column():
-            gate_rate_plot = gr.Plot(label="Gate Pass/Fail Breakdown")
+            gate_rate_plot = gr.Plot(label="Gate Pass/Fail Breakdown", value=initial_results[2])
 
     # Cost + scores
     with gr.Row():
         with gr.Column():
-            cost_plot = gr.Plot(label="Composite Improvement vs Cost")
+            cost_plot = gr.Plot(label="Composite Improvement vs Cost", value=initial_results[3])
         with gr.Column():
             scores_table = gr.Dataframe(
                 label="Best Scores vs Baseline",
                 headers=["Axis", "Baseline", "Best", "Delta"],
+                value=initial_results[4],
             )
 
     def on_load(run_id):
@@ -396,5 +526,17 @@ def create_app() -> gr.Blocks:
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Masubi dashboard")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=7860)
+    args = parser.parse_args()
+
     app = create_app()
-    app.launch(theme=_THEME)
+    app.launch(
+        theme=_THEME,
+        server_name=args.host,
+        server_port=args.port,
+        show_error=True,
+    )

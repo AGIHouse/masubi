@@ -151,7 +151,7 @@ class RunManager:
                     starting.append((entry.name, state))
                 else:
                     active.append((entry.name, state))
-            elif has_metrics and has_summary:
+            elif has_summary:
                 completed.append((entry.name, "completed"))
 
         # Prefer starting > active > completed (most recent in each tier)

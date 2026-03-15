@@ -63,7 +63,7 @@ def test_poll_live_returns_correct_tuple(sample_metrics):
             result = poll_live()
             assert result is not None
             assert isinstance(result, tuple)
-            assert len(result) == 6  # status, banner, composite, gates, radar, log
+            assert len(result) == 7  # status, banner, snapshot, composite, gates, radar, log
     finally:
         _run_manager._current_run_id = old_run_id
         _run_manager._status = old_status
@@ -125,8 +125,9 @@ def test_poll_live_shows_status_message_before_first_metric():
             result = poll_live()
             assert result[0] == "starting (external)"
             assert "Calling agent for experiment 1." in result[1]
-            assert "boot" in result[5]
-            assert "Calling agent for experiment 1." in result[5]
+            assert "Run Snapshot" in result[2]
+            assert "boot" in result[6]
+            assert "Calling agent for experiment 1." in result[6]
     finally:
         _run_manager._current_run_id = old_run_id
         _run_manager._status = old_status
@@ -147,6 +148,48 @@ def test_load_results_with_fixture_data(sample_metrics):
         assert "test_run" in result[-1]
         assert "Viewing" in result[-1]
         assert "Status" in result[-1]
+
+
+def test_load_results_without_metrics_shows_status_history(tmp_path):
+    """Zero-metric runs should still show run details, history, and summary text."""
+    from dashboard import load_results
+
+    run_dir = tmp_path / "run_zero"
+    run_dir.mkdir()
+    (run_dir / "status.json").write_text(json.dumps({
+        "state": "completed",
+        "stage": "train",
+        "phase": "stage2-no-change",
+        "message": "Stage 2 experiment 4 proposed no change.",
+        "current_experiment": 4,
+        "max_experiments": 4,
+        "eval_count": 1,
+        "gold_count": 200,
+        "spent_usd": 0.0,
+    }))
+    (run_dir / "status_history.jsonl").write_text(
+        json.dumps({"updated_at": "2026-03-15T01:37:20+00:00", "phase": "auto-transition", "message": "Auto-transitioning."})
+        + "\n"
+        + json.dumps({"updated_at": "2026-03-15T01:37:41+00:00", "phase": "stage2-no-change", "stage": "train", "message": "Stage 2 experiment 4 proposed no change."})
+        + "\n"
+    )
+    (run_dir / "summary.txt").write_text("Run ID: run_zero\nExperiments: 0")
+
+    with patch(
+        "dashboard.data_loader.list_runs",
+        return_value=[{"run_id": "run_zero", "status": "completed", "status_message": "Stage 2 experiment 4 proposed no change."}],
+    ), patch("dashboard.data_loader.load_run_metrics", return_value=[]), \
+         patch("dashboard.data_loader.load_run_status", return_value=json.loads((run_dir / "status.json").read_text())), \
+         patch("dashboard.data_loader.load_run_status_history", return_value=[
+             {"updated_at": "2026-03-15T01:37:20+00:00", "phase": "auto-transition", "message": "Auto-transitioning."},
+             {"updated_at": "2026-03-15T01:37:41+00:00", "phase": "stage2-no-change", "stage": "train", "message": "Stage 2 experiment 4 proposed no change."},
+         ]), \
+         patch("dashboard.data_loader.load_run_summary", return_value="Run ID: run_zero\nExperiments: 0"):
+        result = load_results("run_zero")
+
+    assert "No experiment metrics were written" in result[-1]
+    assert "Recent Timeline" in result[-1]
+    assert "Summary File" in result[-1]
 
 
 def test_results_summary_content(sample_metrics):

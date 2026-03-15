@@ -1559,43 +1559,51 @@ def run_autoresearch(
 
 
 def _launch_dashboard(port: int = 7860) -> None:
-    """Launch the Gradio dashboard in a background thread and open the browser."""
-    import queue
-    import threading
+    """Launch the Gradio dashboard as a separate process and open the browser."""
+    import subprocess
+    import time
+    import urllib.error
+    import urllib.request
     import webbrowser
 
-    launch_result: queue.Queue[tuple[str, str]] = queue.Queue(maxsize=1)
+    url = f"http://127.0.0.1:{port}/"
 
-    def _run():
+    def _is_ready() -> bool:
         try:
-            from dashboard import create_app, _THEME
-            app = create_app()
-            _app, local_url, _share_url = app.launch(
-                theme=_THEME,
-                inbrowser=False,
-                show_error=True,
-                server_port=port,
-                quiet=True,
-                prevent_thread_lock=True,
-            )
-            launch_result.put(("ok", local_url))
-        except Exception as exc:
-            launch_result.put(("error", str(exc)))
+            with urllib.request.urlopen(url, timeout=0.5) as response:
+                return 200 <= getattr(response, "status", 200) < 500
+        except (urllib.error.URLError, TimeoutError, OSError):
+            return False
 
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
+    if _is_ready():
+        webbrowser.open(url)
+        logger.info("Dashboard already running", url=url)
+        return
+
+    dashboard_path = Path(__file__).with_name("dashboard.py")
     try:
-        status, payload = launch_result.get(timeout=8.0)
-    except queue.Empty:
-        logger.warning("Dashboard launch did not confirm within 8 seconds.")
+        proc = subprocess.Popen(
+            [sys.executable, str(dashboard_path), "--port", str(port)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception as exc:
+        logger.warning("Dashboard failed to start", error=str(exc))
         return
 
-    if status == "ok":
-        webbrowser.open(payload)
-        logger.info("Dashboard launched", url=payload)
-        return
+    deadline = time.time() + 8.0
+    while time.time() < deadline:
+        if _is_ready():
+            webbrowser.open(url)
+            logger.info("Dashboard launched", url=url)
+            return
+        if proc.poll() is not None:
+            logger.warning("Dashboard exited before becoming ready", returncode=proc.returncode)
+            return
+        time.sleep(0.2)
 
-    logger.warning("Dashboard failed to start", error=str(payload))
+    logger.warning("Dashboard launch did not confirm within 8 seconds.", pid=proc.pid)
 
 
 if __name__ == "__main__":
