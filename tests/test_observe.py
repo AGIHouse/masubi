@@ -51,6 +51,18 @@ def test_start_run_snapshots_config(tmp_path, spec):
     assert "trust_axes" in data
 
 
+def test_start_run_writes_status_file(tmp_path, spec):
+    """start_run() writes an initial status.json heartbeat."""
+    from autotrust.observe import start_run
+
+    ctx = start_run(spec, base_dir=tmp_path)
+    status_path = ctx.run_dir / "status.json"
+    assert status_path.exists()
+    data = json.loads(status_path.read_text())
+    assert data["state"] == "starting"
+    assert data["phase"] == "boot"
+
+
 def test_log_experiment_writes_metrics(tmp_path, spec, sample_result):
     """log_experiment() appends to metrics.jsonl with gate results."""
     from autotrust.observe import start_run, log_experiment
@@ -92,6 +104,10 @@ def test_finalize_run_writes_summary(tmp_path, spec):
     assert artifacts.summary_txt.exists()
     content = artifacts.summary_txt.read_text()
     assert "Run ID" in content
+
+    status_data = json.loads((ctx.run_dir / "status.json").read_text())
+    assert status_data["state"] == "completed"
+    assert status_data["phase"] == "done"
 
 
 def test_log_downweight_warning(tmp_path, spec, caplog):

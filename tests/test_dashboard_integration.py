@@ -91,6 +91,30 @@ def test_load_results_with_no_data():
         assert len(result) == 6
 
 
+def test_poll_live_shows_status_message_before_first_metric():
+    """Live tab should show the external run status message before metrics exist."""
+    from dashboard import poll_live, _run_manager, _poll_cache
+
+    old_run_id = _run_manager._current_run_id
+    old_status = _run_manager._status
+    old_cache = dict(_poll_cache)
+    try:
+        _run_manager._current_run_id = None
+        _run_manager._status = "idle"
+        with patch.object(type(_run_manager), "_detect_active_run", return_value="test_run"), \
+             patch.object(type(_run_manager), "_detect_active_run_with_state", return_value=("test_run", "starting")), \
+             patch("dashboard.data_loader.load_latest_metrics", return_value=([], 0)), \
+             patch("dashboard.data_loader.load_run_status", return_value={"message": "Calling agent for experiment 1."}):
+            result = poll_live()
+            assert result[0] == "starting (external)"
+            assert "Calling agent for experiment 1." in result[1]
+            assert "Calling agent for experiment 1." in result[5]
+    finally:
+        _run_manager._current_run_id = old_run_id
+        _run_manager._status = old_status
+        _poll_cache.update(old_cache)
+
+
 def test_load_results_with_fixture_data(sample_metrics):
     """load_results returns charts and summary when data exists."""
     from dashboard import load_results

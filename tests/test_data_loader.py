@@ -86,6 +86,21 @@ def test_list_runs_detects_running_status(tmp_path, sample_experiment):
     assert runs[0]["status"] == "running"
 
 
+def test_list_runs_detects_starting_status_from_config_only(tmp_path):
+    """Run with config.json but no metrics yet should still appear as starting."""
+    from autotrust.dashboard.data_loader import list_runs
+
+    run_dir = tmp_path / "run_starting"
+    run_dir.mkdir()
+    (run_dir / "config.json").write_text("{}")
+    (run_dir / "status.json").write_text(json.dumps({"state": "starting", "message": "Loading eval chains."}))
+
+    runs = list_runs(base_dir=tmp_path)
+    assert len(runs) == 1
+    assert runs[0]["status"] == "starting"
+    assert runs[0]["status_message"] == "Loading eval chains."
+
+
 def test_load_run_metrics_parses_jsonl(tmp_path, sample_experiment):
     """load_run_metrics returns list of 3 dicts with correct fields."""
     from autotrust.dashboard.data_loader import load_run_metrics

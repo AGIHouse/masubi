@@ -612,345 +612,492 @@ def run_autoresearch(
     spec = get_spec()
     calibration = load_calibration()
     run_ctx = start_run(spec)
-
-    # Ensure train.py exists as working copy from the canonical template
-    import shutil
-    starting = Path("starting_train.py")
-    working = Path("train.py")
-    if starting.exists() and (not working.exists() or stage == "prompt"):
-        shutil.copy(str(starting), str(working))
-        logger.info("Copied starting_train.py -> train.py as working copy")
-
-    logger.info("Loading eval chains...")
-    eval_chains = load_eval_chains(limit=eval_limit)
-    logger.info("Loaded eval chains", count=len(eval_chains))
-
-    logger.info("Loading gold chains...")
-    gold_chains = load_gold_chains()
-    logger.info("Loaded gold chains", count=len(gold_chains))
-
-    has_baseline = False
-    prev_best_composite = 0.0
-    prev_best_per_axis: dict[str, float] = {}
-    prev_best_gold_per_axis: dict[str, float] = {}
-    consecutive_no_improvement = 0
-    total_cost = 0.0
-    all_results: list[dict] = []
-
-    time_limit = _get_time_limit(spec, stage)
-    start_time = time.time()
-    logger.info(
-        "Starting research loop",
-        max_experiments=max_experiments,
+    update_run_status(
+        run_ctx,
+        state="running",
+        phase="loading-data",
         stage=stage,
-        budget_usd=spec.limits.max_spend_usd,
-        time_limit_min=time_limit,
-        run_id=run_ctx.run_id,
+        message="Loading eval and gold chains.",
     )
 
-    for experiment_num in range(1, max_experiments + 1):
-        elapsed_total_min = (time.time() - start_time) / 60
+    try:
+        # Ensure train.py exists as working copy from the canonical template
+        import shutil
+        starting = Path("starting_train.py")
+        working = Path("train.py")
+        if starting.exists() and (not working.exists() or stage == "prompt"):
+            shutil.copy(str(starting), str(working))
+            logger.info("Copied starting_train.py -> train.py as working copy")
 
-        # Check limits
-        if _check_time_limit(start_time, spec, time_limit):
-            logger.info("Time limit reached. Stopping.", elapsed_min=f"{elapsed_total_min:.1f}")
-            break
-        if _check_budget(total_cost, spec):
-            logger.info("Budget limit reached. Stopping.", spent_usd=f"{total_cost:.2f}")
-            break
+        logger.info("Loading eval chains...")
+        eval_chains = load_eval_chains(limit=eval_limit)
+        logger.info("Loaded eval chains", count=len(eval_chains))
 
-        # Dashboard callbacks: stop and pause
-        if stop_check and stop_check():
-            logger.info("Stop requested via callback. Ending loop.")
-            break
-        stop_requested_during_pause = False
-        while pause_check and pause_check():
-            time.sleep(1)
-            # Re-check stop during pause
-            if stop_check and stop_check():
-                logger.info("Stop requested during pause. Ending loop.")
-                stop_requested_during_pause = True
-                break
-        if stop_requested_during_pause:
-            break
+        logger.info("Loading gold chains...")
+        gold_chains = load_gold_chains()
+        logger.info("Loaded gold chains", count=len(gold_chains))
 
-        if not eval_chains:
-            logger.warning("No eval chains available. Stopping.")
-            break
+        has_baseline = False
+        prev_best_composite = 0.0
+        prev_best_per_axis: dict[str, float] = {}
+        prev_best_gold_per_axis: dict[str, float] = {}
+        consecutive_no_improvement = 0
+        total_cost = 0.0
+        all_results: list[dict] = []
 
+        time_limit = _get_time_limit(spec, stage)
+        start_time = time.time()
         logger.info(
-            "=== Experiment %d/%d ===",
-            experiment_num,
-            max_experiments,
-            elapsed_min=f"{elapsed_total_min:.1f}",
-            spent_usd=f"${total_cost:.2f}",
-            no_improvement_streak=consecutive_no_improvement,
-        )
-
-        experiment_start = time.time()
-        training_loss = None
-        param_count = None
-        expert_utilization = None
-
-        # Read current files
-        program_md = Path("program.md").read_text()
-        train_py = Path("train.py").read_text()
-
-        if stage == "train":
-            # --- Stage 2: Subprocess execution + checkpoint evaluation ---
-            logger.info("Running Stage 2 iteration...")
-            stage2_result = _run_stage2_iteration(
-                experiment_num=experiment_num,
-                spec=spec,
-                program_md=program_md,
-                all_results=all_results,
-                consecutive_no_improvement=consecutive_no_improvement,
-                experiment_start=experiment_start,
-                eval_limit=eval_limit,
-            )
-            if stage2_result is None:
-                consecutive_no_improvement += 1
-                continue
-            outputs = stage2_result["outputs"]
-            checkpoint_path = stage2_result["checkpoint_path"]
-            experiment_cost = stage2_result["cost"]
-            change_desc = stage2_result["change_desc"]
-            training_loss = stage2_result.get("training_loss")
-            param_count = stage2_result.get("param_count")
-            expert_utilization = stage2_result.get("expert_utilization")
-        else:
-            # --- Stage 1: Prompt optimization (original code path) ---
-            # Build agent prompt
-            prompt = _build_agent_prompt(
-                program_md, train_py, all_results, consecutive_no_improvement,
-                stage="prompt", spec=spec,
-            )
-
-            # --- Call Anthropic Sonnet to propose train.py edits ---
-            experiment_cost = 0.0
-            logger.info("Calling agent (Sonnet) to propose train.py edits...")
-            try:
-                proposed_edit = _call_agent(prompt, spec)
-                agent_duration = time.time() - experiment_start
-                experiment_cost += 0.01  # estimated per-call cost
-                logger.info("Agent responded", duration_sec=f"{agent_duration:.1f}s")
-                _check_experiment_timeout(experiment_start, spec)
-            except ExperimentTimeout as exc:
-                logger.warning("Experiment %d timed out during agent call: %s", experiment_num, exc)
-                consecutive_no_improvement += 1
-                continue
-            except Exception as exc:
-                logger.error("Agent call failed: %s", exc)
-                consecutive_no_improvement += 1
-                continue
-
-            # Apply proposed edit to train.py
-            if proposed_edit and proposed_edit.strip() != train_py.strip():
-                Path("train.py").write_text(proposed_edit)
-                diff_lines = len(proposed_edit.splitlines()) - len(train_py.splitlines())
-                change_desc = f"Agent edit (experiment {experiment_num})"
-                logger.info("Edit applied", lines_delta=f"{diff_lines:+d}", new_lines=len(proposed_edit.splitlines()))
-            else:
-                change_desc = f"No change proposed (experiment {experiment_num})"
-                logger.info("Agent proposed no change. Skipping scoring.")
-                consecutive_no_improvement += 1
-                continue
-
-            # --- Score eval chains using modified train.py ---
-            logger.info("Scoring %d eval chains...", len(eval_chains))
-            score_start = time.time()
-            try:
-                from autotrust.providers import get_provider
-
-                EmailTrustScorer = _load_stage1_scorer_class()
-                scorer_provider = get_provider("scorer", spec)
-                scorer = EmailTrustScorer(provider=scorer_provider, spec=spec)
-                outputs = scorer.score_batch(eval_chains)
-                score_duration = time.time() - score_start
-                experiment_cost += 0.02 * len(eval_chains)  # estimated scoring cost
-                logger.info("Scoring complete", chains=len(outputs), duration_sec=f"{score_duration:.1f}s")
-                _check_experiment_timeout(experiment_start, spec)
-            except ExperimentTimeout as exc:
-                logger.warning("Experiment %d timed out during scoring: %s", experiment_num, exc)
-                Path("train.py").write_text(train_py)
-                consecutive_no_improvement += 1
-                continue
-            except Exception as exc:
-                logger.error("Scoring failed: %s", exc)
-                # Restore train.py on failure
-                Path("train.py").write_text(train_py)
-                consecutive_no_improvement += 1
-                continue
-
-        # --- Three-gate evaluation ---
-        logger.info("Running three-gate evaluation...")
-        predictions = [o.trust_vector for o in outputs]
-        ground_truth = [c.labels for c in eval_chains]
-        explanations = [o.explanation for o in outputs]
-
-        gold_predictions: list[dict[str, float]] = []
-        gold_truth = _gold_truth_labels(gold_chains)
-        if gold_chains:
-            try:
-                if stage == "train":
-                    gold_models = _gold_chain_models(gold_chains)
-                    gold_texts = [_chain_text(chain) for chain in gold_models]
-                    gold_outputs = _score_with_student_model(
-                        checkpoint_path, gold_texts, [a.name for a in spec.trust_axes]
-                    )
-                    if gold_outputs is None:
-                        raise RuntimeError("Student model gold scoring returned no outputs")
-                else:
-                    gold_outputs = scorer.score_batch(_gold_chain_models(gold_chains))
-
-                gold_predictions = [o.trust_vector for o in gold_outputs]
-                experiment_cost += 0.02 * len(gold_predictions)
-            except Exception as exc:
-                logger.error("Gold-set scoring failed: %s", exc)
-                if stage != "train":
-                    Path("train.py").write_text(train_py)
-                consecutive_no_improvement += 1
-                continue
-
-        # Gate 1: Composite score
-        per_axis_metrics = score_predictions(predictions, ground_truth, spec)
-
-        # Compute FP rate for binary axes (phish)
-        phish_preds = [1 if p.get("phish", 0) >= 0.5 else 0 for p in predictions]
-        phish_truth = [1 if t.get("phish", 0) >= 0.5 else 0 for t in ground_truth]
-        fp_count = sum(1 for p, t in zip(phish_preds, phish_truth) if p == 1 and t == 0)
-        neg_count = sum(1 for t in phish_truth if t == 0)
-        fp_rate = fp_count / neg_count if neg_count > 0 else 0.0
-
-        composite = compute_composite(per_axis_metrics, spec, calibration, fp_rate=fp_rate)
-        composite_improved = composite > prev_best_composite
-        logger.info(
-            "Gate 1 (composite): %.4f -> %s (prev best: %.4f, fp_rate: %.3f)",
-            composite, "PASS" if composite_improved else "FAIL", prev_best_composite, fp_rate,
-        )
-
-        # Gate 2: Gold-set veto
-        if gold_chains:
-            gold_per_axis_metrics = score_predictions(gold_predictions, gold_truth, spec)
-            gold_ok, gold_deltas = gold_regression_gate(
-                gold_predictions, gold_truth, prev_best_gold_per_axis, spec
-            )
-            regressed = {k: f"{v:.4f}" for k, v in gold_deltas.items() if v < -1e-9}
-            logger.info(
-                "Gate 2 (gold veto): %s%s",
-                "PASS" if gold_ok else "FAIL",
-                f" regressed={regressed}" if regressed else "",
-            )
-        else:
-            gold_ok = True
-            gold_deltas = {}
-            logger.info("Gate 2 (gold veto): SKIP (no gold chains)")
-
-        # Gate 3: Explanation gate
-        expl_quality = explanation_quality(explanations, predictions, spec)
-        expl_ok, expl_mode = explanation_gate(expl_quality, spec, has_baseline)
-        logger.info(
-            "Gate 3 (explanation): quality=%.3f mode=%s -> %s",
-            expl_quality, expl_mode, "PASS" if expl_ok else "FAIL",
-        )
-
-        # Keep/discard decision
-        keep = keep_or_discard(composite_improved, gold_ok, expl_ok)
-        logger.info("Decision: %s", "KEEP" if keep else "DISCARD")
-
-        # --- Git keep/discard ---
-        _handle_keep_discard(keep, experiment_num)
-
-        if keep:
-            prev_best_composite = composite
-            prev_best_per_axis = per_axis_metrics
-            if gold_chains:
-                prev_best_gold_per_axis = gold_per_axis_metrics
-            has_baseline = True
-            consecutive_no_improvement = 0
-        else:
-            consecutive_no_improvement += 1
-
-        # Auto-transition from Stage 1 to Stage 2
-        if _should_auto_transition(stage, consecutive_no_improvement):
-            stage = _auto_transition(spec)
-            time_limit = _get_time_limit(spec, stage)
-            consecutive_no_improvement = 0
-
-        # --- Log experiment ---
-        total_cost += experiment_cost
-        experiment_elapsed = time.time() - experiment_start
-        elapsed = time.time() - start_time
-
-        result = ExperimentResult(
+            "Starting research loop",
+            max_experiments=max_experiments,
+            stage=stage,
+            budget_usd=spec.limits.max_spend_usd,
+            time_limit_min=time_limit,
             run_id=run_ctx.run_id,
-            change_description=change_desc,
-            per_axis_scores=per_axis_metrics,
-            composite=composite,
-            fp_rate=fp_rate,
-            judge_agreement=0.0,
-            gold_agreement=(
-                sum(gold_per_axis_metrics.values()) / len(gold_per_axis_metrics)
-                if gold_chains else 0.0
-            ),
-            explanation_quality=expl_quality,
-            downweighted_axes=calibration.flagged_axes,
-            gate_results={
-                "composite": composite_improved,
-                "gold": gold_ok,
-                "explanation": expl_ok,
-            },
-            cost=experiment_cost,
-            wall_time=elapsed,
-            training_loss=training_loss,
-            param_count=param_count,
-            expert_utilization=expert_utilization,
+        )
+        update_run_status(
+            run_ctx,
+            state="running",
+            phase="ready",
+            stage=stage,
+            message=f"Loaded {len(eval_chains)} eval chains and {len(gold_chains)} gold chains.",
         )
 
-        _log_iteration(run_ctx, result)
-        all_results.append(result.model_dump(exclude_none=True))
+        for experiment_num in range(1, max_experiments + 1):
+            elapsed_total_min = (time.time() - start_time) / 60
 
+            # Check limits
+            if _check_time_limit(start_time, spec, time_limit):
+                logger.info("Time limit reached. Stopping.", elapsed_min=f"{elapsed_total_min:.1f}")
+                break
+            if _check_budget(total_cost, spec):
+                logger.info("Budget limit reached. Stopping.", spent_usd=f"{total_cost:.2f}")
+                break
+
+            if stop_check and stop_check():
+                logger.info("Stop requested via callback. Ending loop.")
+                break
+
+            stop_requested_during_pause = False
+            while pause_check and pause_check():
+                time.sleep(1)
+                if stop_check and stop_check():
+                    logger.info("Stop requested during pause. Ending loop.")
+                    stop_requested_during_pause = True
+                    break
+            if stop_requested_during_pause:
+                break
+
+            if not eval_chains:
+                logger.warning("No eval chains available. Stopping.")
+                update_run_status(
+                    run_ctx,
+                    state="running",
+                    phase="waiting-for-data",
+                    stage=stage,
+                    message="No eval chains available; stopping early.",
+                    experiment_num=experiment_num,
+                )
+                break
+
+            logger.info(
+                "=== Experiment %d/%d ===",
+                experiment_num,
+                max_experiments,
+                elapsed_min=f"{elapsed_total_min:.1f}",
+                spent_usd=f"${total_cost:.2f}",
+                no_improvement_streak=consecutive_no_improvement,
+            )
+
+            update_run_status(
+                run_ctx,
+                state="running",
+                phase="experiment-start",
+                stage=stage,
+                experiment_num=experiment_num,
+                message=f"Starting experiment {experiment_num} ({stage}).",
+            )
+
+            experiment_start = time.time()
+            training_loss = None
+            param_count = None
+            expert_utilization = None
+
+            # Read current files
+            program_md = Path("program.md").read_text()
+            train_py = Path("train.py").read_text()
+
+            if stage == "train":
+                logger.info("Running Stage 2 iteration...")
+                update_run_status(
+                    run_ctx,
+                    state="running",
+                    phase="stage2-train",
+                    stage=stage,
+                    experiment_num=experiment_num,
+                    message=f"Running Stage 2 training for experiment {experiment_num}.",
+                )
+                stage2_result = _run_stage2_iteration(
+                    experiment_num=experiment_num,
+                    spec=spec,
+                    program_md=program_md,
+                    all_results=all_results,
+                    consecutive_no_improvement=consecutive_no_improvement,
+                    experiment_start=experiment_start,
+                    eval_limit=eval_limit,
+                )
+                if stage2_result is None:
+                    update_run_status(
+                        run_ctx,
+                        state="running",
+                        phase="stage2-train",
+                        stage=stage,
+                        experiment_num=experiment_num,
+                        message=f"Stage 2 experiment {experiment_num} produced no checkpoint or scores.",
+                    )
+                    consecutive_no_improvement += 1
+                    continue
+                outputs = stage2_result["outputs"]
+                checkpoint_path = stage2_result["checkpoint_path"]
+                experiment_cost = stage2_result["cost"]
+                change_desc = stage2_result["change_desc"]
+                training_loss = stage2_result.get("training_loss")
+                param_count = stage2_result.get("param_count")
+                expert_utilization = stage2_result.get("expert_utilization")
+            else:
+                prompt = _build_agent_prompt(
+                    program_md, train_py, all_results, consecutive_no_improvement,
+                    stage="prompt", spec=spec,
+                )
+
+                experiment_cost = 0.0
+                logger.info("Calling agent (Sonnet) to propose train.py edits...")
+                update_run_status(
+                    run_ctx,
+                    state="running",
+                    phase="calling-agent",
+                    stage=stage,
+                    experiment_num=experiment_num,
+                    message=f"Calling agent for experiment {experiment_num}.",
+                )
+                try:
+                    proposed_edit = _call_agent(prompt, spec)
+                    agent_duration = time.time() - experiment_start
+                    experiment_cost += 0.01
+                    logger.info("Agent responded", duration_sec=f"{agent_duration:.1f}s")
+                    _check_experiment_timeout(experiment_start, spec)
+                except ExperimentTimeout as exc:
+                    logger.warning("Experiment %d timed out during agent call: %s", experiment_num, exc)
+                    update_run_status(
+                        run_ctx,
+                        state="running",
+                        phase="calling-agent",
+                        stage=stage,
+                        experiment_num=experiment_num,
+                        message=f"Experiment {experiment_num} timed out during agent call.",
+                        error=str(exc),
+                    )
+                    consecutive_no_improvement += 1
+                    continue
+                except Exception as exc:
+                    logger.error("Agent call failed: %s", exc)
+                    update_run_status(
+                        run_ctx,
+                        state="running",
+                        phase="calling-agent",
+                        stage=stage,
+                        experiment_num=experiment_num,
+                        message=f"Experiment {experiment_num} failed during agent call.",
+                        error=str(exc),
+                    )
+                    consecutive_no_improvement += 1
+                    continue
+
+                if proposed_edit and proposed_edit.strip() != train_py.strip():
+                    Path("train.py").write_text(proposed_edit)
+                    diff_lines = len(proposed_edit.splitlines()) - len(train_py.splitlines())
+                    change_desc = f"Agent edit (experiment {experiment_num})"
+                    logger.info("Edit applied", lines_delta=f"{diff_lines:+d}", new_lines=len(proposed_edit.splitlines()))
+                else:
+                    change_desc = f"No change proposed (experiment {experiment_num})"
+                    logger.info("Agent proposed no change. Skipping scoring.")
+                    update_run_status(
+                        run_ctx,
+                        state="running",
+                        phase="no-change",
+                        stage=stage,
+                        experiment_num=experiment_num,
+                        message=f"Experiment {experiment_num} proposed no change.",
+                    )
+                    consecutive_no_improvement += 1
+                    continue
+                logger.info("Scoring %d eval chains...", len(eval_chains))
+                update_run_status(
+                    run_ctx,
+                    state="running",
+                    phase="scoring-eval",
+                    stage=stage,
+                    experiment_num=experiment_num,
+                    message=f"Scoring {len(eval_chains)} eval chains for experiment {experiment_num}.",
+                )
+                score_start = time.time()
+                try:
+                    from autotrust.providers import get_provider
+
+                    EmailTrustScorer = _load_stage1_scorer_class()
+                    scorer_provider = get_provider("scorer", spec)
+                    scorer = EmailTrustScorer(provider=scorer_provider, spec=spec)
+                    outputs = scorer.score_batch(eval_chains)
+                    score_duration = time.time() - score_start
+                    experiment_cost += 0.02 * len(eval_chains)
+                    logger.info("Scoring complete", chains=len(outputs), duration_sec=f"{score_duration:.1f}s")
+                    _check_experiment_timeout(experiment_start, spec)
+                except ExperimentTimeout as exc:
+                    logger.warning("Experiment %d timed out during scoring: %s", experiment_num, exc)
+                    update_run_status(
+                        run_ctx,
+                        state="running",
+                        phase="scoring-eval",
+                        stage=stage,
+                        experiment_num=experiment_num,
+                        message=f"Experiment {experiment_num} timed out during scoring.",
+                        error=str(exc),
+                    )
+                    Path("train.py").write_text(train_py)
+                    consecutive_no_improvement += 1
+                    continue
+                except Exception as exc:
+                    logger.error("Scoring failed: %s", exc)
+                    update_run_status(
+                        run_ctx,
+                        state="running",
+                        phase="scoring-eval",
+                        stage=stage,
+                        experiment_num=experiment_num,
+                        message=f"Experiment {experiment_num} failed during scoring.",
+                        error=str(exc),
+                    )
+                    Path("train.py").write_text(train_py)
+                    consecutive_no_improvement += 1
+                    continue
+
+            logger.info("Running three-gate evaluation...")
+            update_run_status(
+                run_ctx,
+                state="running",
+                phase="evaluating",
+                stage=stage,
+                experiment_num=experiment_num,
+                message=f"Running gates for experiment {experiment_num}.",
+            )
+            predictions = [o.trust_vector for o in outputs]
+            ground_truth = [c.labels for c in eval_chains]
+            explanations = [o.explanation for o in outputs]
+
+            gold_predictions: list[dict[str, float]] = []
+            gold_truth = _gold_truth_labels(gold_chains)
+            if gold_chains:
+                try:
+                    if stage == "train":
+                        gold_models = _gold_chain_models(gold_chains)
+                        gold_texts = [_chain_text(chain) for chain in gold_models]
+                        gold_outputs = _score_with_student_model(
+                            checkpoint_path, gold_texts, [a.name for a in spec.trust_axes]
+                        )
+                        if gold_outputs is None:
+                            raise RuntimeError("Student model gold scoring returned no outputs")
+                    else:
+                        gold_outputs = scorer.score_batch(_gold_chain_models(gold_chains))
+
+                    gold_predictions = [o.trust_vector for o in gold_outputs]
+                    experiment_cost += 0.02 * len(gold_predictions)
+                except Exception as exc:
+                    logger.error("Gold-set scoring failed: %s", exc)
+                    update_run_status(
+                        run_ctx,
+                        state="running",
+                        phase="gold-scoring",
+                        stage=stage,
+                        experiment_num=experiment_num,
+                        message=f"Experiment {experiment_num} failed during gold scoring.",
+                        error=str(exc),
+                    )
+                    if stage != "train":
+                        Path("train.py").write_text(train_py)
+                    consecutive_no_improvement += 1
+                    continue
+
+            per_axis_metrics = score_predictions(predictions, ground_truth, spec)
+
+            phish_preds = [1 if p.get("phish", 0) >= 0.5 else 0 for p in predictions]
+            phish_truth = [1 if t.get("phish", 0) >= 0.5 else 0 for t in ground_truth]
+            fp_count = sum(1 for p, t in zip(phish_preds, phish_truth) if p == 1 and t == 0)
+            neg_count = sum(1 for t in phish_truth if t == 0)
+            fp_rate = fp_count / neg_count if neg_count > 0 else 0.0
+
+            composite = compute_composite(per_axis_metrics, spec, calibration, fp_rate=fp_rate)
+            composite_improved = composite > prev_best_composite
+            logger.info(
+                "Gate 1 (composite): %.4f -> %s (prev best: %.4f, fp_rate: %.3f)",
+                composite, "PASS" if composite_improved else "FAIL", prev_best_composite, fp_rate,
+            )
+
+            if gold_chains:
+                gold_per_axis_metrics = score_predictions(gold_predictions, gold_truth, spec)
+                gold_ok, gold_deltas = gold_regression_gate(
+                    gold_predictions, gold_truth, prev_best_gold_per_axis, spec
+                )
+                regressed = {k: f"{v:.4f}" for k, v in gold_deltas.items() if v < -1e-9}
+                logger.info(
+                    "Gate 2 (gold veto): %s%s",
+                    "PASS" if gold_ok else "FAIL",
+                    f" regressed={regressed}" if regressed else "",
+                )
+            else:
+                gold_per_axis_metrics = {}
+                gold_ok = True
+                gold_deltas = {}
+                logger.info("Gate 2 (gold veto): SKIP (no gold chains)")
+
+            expl_quality = explanation_quality(explanations, predictions, spec)
+            expl_ok, expl_mode = explanation_gate(expl_quality, spec, has_baseline)
+            logger.info(
+                "Gate 3 (explanation): quality=%.3f mode=%s -> %s",
+                expl_quality, expl_mode, "PASS" if expl_ok else "FAIL",
+            )
+
+            keep = keep_or_discard(composite_improved, gold_ok, expl_ok)
+            logger.info("Decision: %s", "KEEP" if keep else "DISCARD")
+
+            _handle_keep_discard(keep, experiment_num)
+
+            if keep:
+                prev_best_composite = composite
+                prev_best_per_axis = per_axis_metrics
+                if gold_chains:
+                    prev_best_gold_per_axis = gold_per_axis_metrics
+                has_baseline = True
+                consecutive_no_improvement = 0
+            else:
+                consecutive_no_improvement += 1
+
+            if _should_auto_transition(stage, consecutive_no_improvement):
+                stage = _auto_transition(spec)
+                time_limit = _get_time_limit(spec, stage)
+                consecutive_no_improvement = 0
+
+            total_cost += experiment_cost
+            experiment_elapsed = time.time() - experiment_start
+            elapsed = time.time() - start_time
+
+            result = ExperimentResult(
+                run_id=run_ctx.run_id,
+                change_description=change_desc,
+                per_axis_scores=per_axis_metrics,
+                composite=composite,
+                fp_rate=fp_rate,
+                judge_agreement=0.0,
+                gold_agreement=(
+                    sum(gold_per_axis_metrics.values()) / len(gold_per_axis_metrics)
+                    if gold_chains else 0.0
+                ),
+                explanation_quality=expl_quality,
+                downweighted_axes=calibration.flagged_axes,
+                gate_results={
+                    "composite": composite_improved,
+                    "gold": gold_ok,
+                    "explanation": expl_ok,
+                },
+                cost=experiment_cost,
+                wall_time=elapsed,
+                training_loss=training_loss,
+                param_count=param_count,
+                expert_utilization=expert_utilization,
+            )
+
+            _log_iteration(run_ctx, result)
+            all_results.append(result.model_dump(exclude_none=True))
+            update_run_status(
+                run_ctx,
+                state="running",
+                phase="experiment-complete",
+                stage=stage,
+                experiment_num=experiment_num,
+                message=f"Experiment {experiment_num} complete: {'KEPT' if keep else 'DISCARDED'} at {composite:.4f}.",
+            )
+
+            logger.info(
+                "Experiment %d complete: composite=%.4f %s [%.1fs, $%.2f total, %.1fm elapsed]",
+                experiment_num, composite, "KEPT" if keep else "DISCARDED",
+                experiment_elapsed, total_cost, elapsed / 60,
+            )
+
+        update_run_status(
+            run_ctx,
+            state="finalizing",
+            phase="finalizing",
+            stage=stage,
+            message="Writing run summary.",
+            experiment_num=len(all_results),
+        )
+        finalize_run(run_ctx)
         logger.info(
-            "Experiment %d complete: composite=%.4f %s [%.1fs, $%.2f total, %.1fm elapsed]",
-            experiment_num, composite, "KEPT" if keep else "DISCARDED",
-            experiment_elapsed, total_cost, elapsed / 60,
+            "Research loop complete",
+            experiments=len(all_results),
+            best_composite=f"{prev_best_composite:.4f}",
+            total_cost=f"${total_cost:.2f}",
+            total_time=f"{(time.time() - start_time) / 60:.1f}m",
         )
-
-    finalize_run(run_ctx)
-    logger.info(
-        "Research loop complete",
-        experiments=len(all_results),
-        best_composite=f"{prev_best_composite:.4f}",
-        total_cost=f"${total_cost:.2f}",
-        total_time=f"{(time.time() - start_time) / 60:.1f}m",
-    )
+    except Exception as exc:
+        update_run_status(
+            run_ctx,
+            state="failed",
+            phase="error",
+            stage=stage,
+            message="Run crashed before completion.",
+            error=str(exc),
+        )
+        raise
 
 
 def _launch_dashboard(port: int = 7860) -> None:
     """Launch the Gradio dashboard in a background thread and open the browser."""
+    import queue
     import threading
     import webbrowser
+
+    launch_result: queue.Queue[tuple[str, str]] = queue.Queue(maxsize=1)
 
     def _run():
         try:
             from dashboard import create_app, _THEME
             app = create_app()
-            app.launch(
+            _app, local_url, _share_url = app.launch(
                 theme=_THEME,
+                inbrowser=False,
+                show_error=True,
                 server_port=port,
                 quiet=True,
                 prevent_thread_lock=True,
             )
+            launch_result.put(("ok", local_url))
         except Exception as exc:
-            logger.warning("Dashboard failed to start: %s", exc)
+            launch_result.put(("error", str(exc)))
 
     t = threading.Thread(target=_run, daemon=True)
     t.start()
-    # Give Gradio a moment to bind, then open browser
-    import time as _time
-    _time.sleep(1.5)
-    webbrowser.open(f"http://localhost:{port}")
-    logger.info("Dashboard launched at http://localhost:%d", port)
+    try:
+        status, payload = launch_result.get(timeout=8.0)
+    except queue.Empty:
+        logger.warning("Dashboard launch did not confirm within 8 seconds.")
+        return
+
+    if status == "ok":
+        webbrowser.open(payload)
+        logger.info("Dashboard launched at %s", payload)
+        return
+
+    logger.warning("Dashboard failed to start: %s", payload)
 
 
 if __name__ == "__main__":

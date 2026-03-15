@@ -27,6 +27,20 @@ def test_initial_status_is_idle():
     assert rm.current_run_id is None
 
 
+def test_external_starting_run_is_detected(tmp_path):
+    """A config-only external run should show up as starting."""
+    from autotrust.dashboard.run_manager import RunManager
+
+    run_dir = tmp_path / "20260314_120000_abcd1234"
+    run_dir.mkdir()
+    (run_dir / "config.json").write_text("{}")
+    (run_dir / "status.json").write_text('{"state": "starting", "message": "Booting"}')
+
+    run_id, state = RunManager._detect_active_run_with_state(base_dir=tmp_path)
+    assert run_id == run_dir.name
+    assert state == "starting"
+
+
 def test_start_sets_running():
     """After start(), status is 'running' and current_run_id may be detected."""
     from autotrust.dashboard.run_manager import RunManager
