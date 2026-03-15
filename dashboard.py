@@ -46,6 +46,14 @@ def _refresh_poll_cache() -> list[dict]:
     return _poll_cache["metrics"]
 
 
+def _load_current_run_status() -> dict:
+    """Load status metadata for the current external or local run."""
+    run_id = _run_manager.current_run_id
+    if not run_id:
+        return {}
+    return data_loader.load_run_status(run_id)
+
+
 # ---------------------------------------------------------------------------
 # Status banner
 # ---------------------------------------------------------------------------
@@ -54,6 +62,9 @@ def _status_banner(metrics: list[dict]) -> str:
     """One-line status summary shown at top of Live tab."""
     if not metrics:
         status = _run_manager.status
+        run_status = _load_current_run_status()
+        if run_status.get("message"):
+            return f"**{status}** | {run_status['message']}"
         if "starting" in status:
             return "Run detected -- waiting for first experiment to complete..."
         if "running" in status:
@@ -141,6 +152,11 @@ def poll_live():
 
     metrics = _refresh_poll_cache()
     banner = _status_banner(metrics)
+    if metrics:
+        log_stream = log_formatter.format_log_stream(metrics)
+    else:
+        run_status = _load_current_run_status()
+        log_stream = run_status.get("message", "No experiments yet.")
 
     return (
         status,
@@ -148,7 +164,7 @@ def poll_live():
         charts.composite_trend(metrics),
         charts.gate_timeline(metrics),
         charts.radar_chart(metrics[-1] if metrics else {}),
-        log_formatter.format_log_stream(metrics),
+        log_stream,
     )
 
 
@@ -170,13 +186,15 @@ def load_results(run_id: str | None = None):
 
     if not metrics:
         empty = charts._empty_figure("No experiment data")
+        status_message = run_info.get("status_message", "") if run_info else ""
+        extra = f"\n\n**Message:** {status_message}" if status_message else ""
         return (
             empty,
             empty,
             empty,
             empty,
             [],
-            f"### Run: {run_id}\n**Viewing:** {view_label}\n\nNo experiment data yet.",
+            f"### Run: {run_id}\n**Viewing:** {view_label}{extra}\n\nNo experiment data yet.",
         )
 
     return (

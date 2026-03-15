@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 from pathlib import Path
@@ -82,13 +83,9 @@ class RunManager:
     @property
     def status(self) -> str:
         if self._status == "idle" and self._current_run_id is None:
-            ext_run = self._detect_active_run()
+            ext_run, ext_state = self._detect_active_run_with_state()
             if ext_run is not None:
-                run_dir = Path("runs") / ext_run
-                has_metrics = (run_dir / "metrics.jsonl").exists()
-                if has_metrics:
-                    return "running (external)"
-                return "starting (external)"
+                return f"{ext_state} (external)"
         return self._status
 
     @property
@@ -118,16 +115,28 @@ class RunManager:
         return {e.name for e in base_dir.iterdir() if e.is_dir()}
 
     @staticmethod
-    def _detect_active_run(base_dir: Path = Path("runs")) -> str | None:
-        """Find the most recent in-progress or completed run.
+    def _load_run_status(entry: Path) -> dict:
+        """Load status.json from a run directory if present."""
+        status_path = entry / "status.json"
+        if not status_path.exists():
+            return {}
+        try:
+            return json.loads(status_path.read_text())
+        except json.JSONDecodeError:
+            return {}
+
+    @classmethod
+    def _detect_active_run_with_state(cls, base_dir: Path = Path("runs")) -> tuple[str | None, str]:
+        """Find the most recent in-progress or completed run plus its state.
 
         Detection priority:
-        1. Has config.json but no summary.txt (starting -- first experiment not done yet)
-        2. Has metrics.jsonl but no summary.txt (actively running)
-        3. Has metrics.jsonl and summary.txt (completed)
+        1. Explicit running-style states from status.json
+        2. config.json but no summary.txt
+        3. metrics.jsonl but no summary.txt
+        4. metrics.jsonl and summary.txt
         """
         if not base_dir.exists():
-            return None
+            return None, "idle"
 
         starting = []
         active = []
@@ -138,21 +147,34 @@ class RunManager:
             has_config = (entry / "config.json").exists()
             has_metrics = (entry / "metrics.jsonl").exists()
             has_summary = (entry / "summary.txt").exists()
-            if has_config and not has_metrics and not has_summary:
-                starting.append(entry.name)
+            state = cls._load_run_status(entry).get("state")
+
+            if not has_summary and state in {"starting", "running", "paused", "stopping"}:
+                if state == "starting":
+                    starting.append((entry.name, state))
+                else:
+                    active.append((entry.name, state))
+            elif has_config and not has_metrics and not has_summary:
+                starting.append((entry.name, "starting"))
             elif has_metrics and not has_summary:
-                active.append(entry.name)
+                active.append((entry.name, "running"))
             elif has_metrics and has_summary:
-                completed.append(entry.name)
+                completed.append((entry.name, "completed"))
 
         # Prefer starting > active > completed (most recent in each tier)
         if starting:
-            return sorted(starting)[-1]
+            return sorted(starting, key=lambda item: item[0])[-1]
         if active:
-            return sorted(active)[-1]
+            return sorted(active, key=lambda item: item[0])[-1]
         if completed:
-            return sorted(completed)[-1]
-        return None
+            return sorted(completed, key=lambda item: item[0])[-1]
+        return None, "idle"
+
+    @classmethod
+    def _detect_active_run(cls, base_dir: Path = Path("runs")) -> str | None:
+        """Return only the run_id for the most relevant external run."""
+        run_id, _state = cls._detect_active_run_with_state(base_dir=base_dir)
+        return run_id
 
     def _detect_run_id(self) -> None:
         """Detect the actual run_id by finding new directories in runs/."""

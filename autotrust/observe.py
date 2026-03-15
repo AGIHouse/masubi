@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -21,21 +22,32 @@ if TYPE_CHECKING:
 
 
 def configure_structlog() -> None:
-    """Configure structlog with JSON output, ISO timestamps, and log level."""
+    """Configure structlog with human-readable console output when interactive.
+
+    Uses ConsoleRenderer when stdout is a terminal (colored, readable).
+    Falls back to JSONRenderer when piped or redirected (machine-parseable).
+    """
     root_logger = logging.getLogger()
     if not root_logger.handlers:
-        logging.basicConfig(level=logging.INFO, format="%(message)s")
+        logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
+
+    interactive = hasattr(sys.stderr, "isatty") and sys.stderr.isatty()
+
+    if interactive:
+        renderer = structlog.dev.ConsoleRenderer()
+    else:
+        renderer = structlog.processors.JSONRenderer()
 
     structlog.configure(
         processors=[
             structlog.stdlib.add_log_level,
             structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.JSONRenderer(),
+            renderer,
         ],
         wrapper_class=structlog.stdlib.BoundLogger,
         context_class=dict,
         logger_factory=structlog.stdlib.LoggerFactory(),
-        cache_logger_on_first_use=True,
+        cache_logger_on_first_use=False,
     )
 
 

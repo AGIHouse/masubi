@@ -41,6 +41,7 @@ from autotrust.observe import (
     finalize_run,
     log_experiment,
     start_run,
+    update_run_status,
 )
 from autotrust.schemas import (
     CalibrationReport,
