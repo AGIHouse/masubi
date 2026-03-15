@@ -46,6 +46,7 @@ class ProviderDef(BaseModel):
 
 
 class Providers(BaseModel):
+    agent: ProviderDef
     generator: ProviderDef
     scorer: ProviderDef
     judge_primary: ProviderDef

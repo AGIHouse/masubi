@@ -110,6 +110,27 @@ def test_format_log_stream_newest_first(kept_experiment, discarded_experiment):
     assert first_690 < first_681
 
 
+def test_format_status_history_newest_first():
+    """Status-history formatting should show the latest phase first."""
+    from autotrust.dashboard.log_formatter import format_status_history
+
+    events = [
+        {"updated_at": "2026-03-15T01:04:03+00:00", "phase": "boot", "message": "Run created."},
+        {
+            "updated_at": "2026-03-15T01:04:57+00:00",
+            "phase": "calling-agent",
+            "stage": "prompt",
+            "experiment_num": 1,
+            "message": "Calling agent for experiment 1.",
+        },
+    ]
+
+    output = format_status_history(events)
+    lines = output.splitlines()
+    assert "calling-agent" in lines[0]
+    assert "boot" in lines[1]
+
+
 def test_format_log_entry_includes_stage2_metrics(kept_experiment):
     """Stage 2 log lines include compact loss and param-count telemetry."""
     from autotrust.dashboard.log_formatter import format_experiment_log_entry

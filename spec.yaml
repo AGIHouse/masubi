@@ -75,12 +75,15 @@ providers:
   scorer:
     backend: hyperbolic
     model: Qwen/Qwen3-Next-80B-A3B-Instruct
+  agent:
+    backend: anthropic
+    model: claude-opus-4-6
   judge_primary:
     backend: anthropic
-    model: claude-opus-4-20250514
+    model: claude-opus-4-6
   judge_secondary:
     backend: anthropic
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4-6
   trainer:
     backend: hyperbolic_gpu
     model: meta-llama/Meta-Llama-3.1-8B-Instruct
