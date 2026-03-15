@@ -80,7 +80,7 @@ def load_eval_chains(limit: int | None = None) -> list[EmailChain]:
     """Load evaluation chains from eval_set/eval_chains.jsonl."""
     path = Path("eval_set/eval_chains.jsonl")
     if not path.exists():
-        logger.warning("No eval chains found at %s", path)
+        logger.warning("No eval chains found", path=str(path))
         return []
 
     chains = []
@@ -96,7 +96,7 @@ def load_gold_chains() -> list[dict[str, float]]:
     """Load raw gold records from gold_set/gold_chains.jsonl."""
     path = Path("gold_set/gold_chains.jsonl")
     if not path.exists():
-        logger.warning("No gold chains found at %s", path)
+        logger.warning("No gold chains found", path=str(path))
         return []
 
     chains = []
@@ -338,7 +338,7 @@ def _score_with_student_model(
             outputs.append(output)
         return outputs
     except Exception as exc:
-        logger.error("Student model scoring failed: %s", exc)
+        logger.error("Student model scoring failed", error=str(exc))
         return None
 
 
@@ -373,7 +373,7 @@ def _load_stage2_training_metrics(checkpoint_path: Path) -> dict[str, Any]:
     try:
         return json.loads(metrics_path.read_text())
     except json.JSONDecodeError:
-        logger.warning("Invalid Stage 2 training metrics at %s", metrics_path)
+        logger.warning("Invalid Stage 2 training metrics", path=str(metrics_path))
         return {}
 
 
@@ -419,10 +419,10 @@ def _run_stage2_iteration(
         experiment_cost = 0.01
         _check_experiment_timeout(experiment_start, spec)
     except ExperimentTimeout as exc:
-        logger.warning("Stage 2 experiment %d timed out during agent call: %s", experiment_num, exc)
+        logger.warning("Stage 2 experiment timed out during agent call", experiment=experiment_num, error=str(exc))
         return None
     except Exception as exc:
-        logger.error("Agent call failed in Stage 2: %s", exc)
+        logger.error("Agent call failed in Stage 2", error=str(exc))
         return None
 
     # Apply edit
@@ -442,15 +442,15 @@ def _run_stage2_iteration(
             timeout=timeout_seconds,
         )
         if result.returncode != 0:
-            logger.error("Stage 2 train.py failed: %s", result.stderr[:500])
+            logger.error("Stage 2 train.py failed", stderr=result.stderr[:500])
             Path("train.py").write_text(train_py)  # restore
             return None
     except subprocess.TimeoutExpired:
-        logger.warning("Stage 2 train.py timed out after %ds", timeout_seconds)
+        logger.warning("Stage 2 train.py timed out", timeout_sec=timeout_seconds)
         Path("train.py").write_text(train_py)
         return None
     except Exception as exc:
-        logger.error("Stage 2 subprocess error: %s", exc)
+        logger.error("Stage 2 subprocess error", error=str(exc))
         Path("train.py").write_text(train_py)
         return None
 
@@ -561,23 +561,23 @@ def _handle_keep_discard(keep: bool, experiment_num: int) -> None:
             ["git", "add", "train.py"], capture_output=True, text=True,
         )
         if result.returncode != 0:
-            logger.error("git add failed: %s", result.stderr)
+            logger.error("git add failed", stderr=result.stderr)
             return
         result = subprocess.run(
             ["git", "commit", "-m", f"experiment {experiment_num}: keep"],
             capture_output=True, text=True,
         )
         if result.returncode != 0:
-            logger.error("git commit failed: %s", result.stderr)
+            logger.error("git commit failed", stderr=result.stderr)
             return
-        logger.info("Experiment %d: KEPT (committed train.py)", experiment_num)
+        logger.info("KEPT (committed train.py)", experiment=experiment_num)
     else:
         result = subprocess.run(
             ["git", "checkout", "--", "train.py"], capture_output=True, text=True,
         )
         if result.returncode != 0:
-            logger.error("git checkout failed: %s", result.stderr)
-        logger.info("Experiment %d: DISCARDED (restored train.py)", experiment_num)
+            logger.error("git checkout failed", stderr=result.stderr)
+        logger.info("DISCARDED (restored train.py)", experiment=experiment_num)
 
 
 def _log_iteration(ctx: Any, result: ExperimentResult) -> None:
@@ -701,9 +701,7 @@ def run_autoresearch(
                 break
 
             logger.info(
-                "=== Experiment %d/%d ===",
-                experiment_num,
-                max_experiments,
+                f"=== Experiment {experiment_num}/{max_experiments} ===",
                 elapsed_min=f"{elapsed_total_min:.1f}",
                 spent_usd=f"${total_cost:.2f}",
                 no_improvement_streak=consecutive_no_improvement,
@@ -787,7 +785,7 @@ def run_autoresearch(
                     logger.info("Agent responded", duration_sec=f"{agent_duration:.1f}s")
                     _check_experiment_timeout(experiment_start, spec)
                 except ExperimentTimeout as exc:
-                    logger.warning("Experiment %d timed out during agent call: %s", experiment_num, exc)
+                    logger.warning("Experiment timed out during agent call", experiment=experiment_num, error=str(exc))
                     update_run_status(
                         run_ctx,
                         state="running",
